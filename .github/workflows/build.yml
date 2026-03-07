@@ -15,12 +15,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npx electron-builder --mac --arm64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: npx electron-builder --mac --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npx electron-builder --mac --arm64 --publish never
+      - run: npx electron-builder --mac --x64 --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: mac-builds
@@ -36,9 +32,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npx electron-builder --win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npx electron-builder --win --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: win-builds
