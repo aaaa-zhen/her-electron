@@ -62,6 +62,24 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
     return { ok: true };
   });
 
+  ipcMain.handle("her:get-settings", () => {
+    const s = stores.settingsStore.get();
+    return {
+      apiKey: s.apiKey ? `${s.apiKey.slice(0, 6)}...${s.apiKey.slice(-4)}` : "",
+      baseURL: s.baseURL || "",
+      model: s.model || "",
+    };
+  });
+
+  ipcMain.handle("her:save-settings", (_event, patch) => {
+    const update = {};
+    if (patch.apiKey && !patch.apiKey.includes("...")) update.apiKey = patch.apiKey.trim();
+    if (patch.baseURL !== undefined) update.baseURL = patch.baseURL.trim();
+    if (patch.model !== undefined) update.model = patch.model.trim();
+    stores.settingsStore.update(update);
+    return { ok: true };
+  });
+
   ipcMain.handle("her:save-news-briefing", (_event, payload) => {
     stores.settingsStore.update({ newsBriefing: payload || null });
     // Emit event so main process can re-setup cron

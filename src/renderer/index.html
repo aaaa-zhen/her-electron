@@ -98,11 +98,18 @@
     <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 17v5"/><path d="M9 11V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v7"/><path d="M5 17h14"/><path d="M7 17l1.5-6h7L17 17"/>
     </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </symbol>
   </svg>
 
   <header>
     <div class="hd-name">Her <span class="hd-dot" id="statusDot"></span><span class="hd-status" id="statusText"></span></div>
     <div class="hd-actions">
+      <button class="hd-btn" id="settingsBtn" title="设置">
+        <svg><use href="#i-settings"/></svg>
+      </button>
       <button class="hd-btn" id="pinBtn" title="置顶窗口">
         <svg><use href="#i-pin"/></svg>
       </button>
@@ -156,6 +163,38 @@
 
   <div class="toast" id="toast"></div>
   <div class="lightbox" id="lightbox"><img id="lightbox-img" src="" alt=""></div>
+
+  <div class="settings-overlay" id="settingsOverlay">
+    <div class="settings-panel">
+      <div class="settings-header">
+        <span class="settings-title">设置</span>
+        <button class="settings-close" id="settingsClose">&times;</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-group">
+          <label class="settings-label">API Key</label>
+          <input class="settings-input" id="settingsApiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+          <div class="settings-hint">用于连接 AI 模型的密钥</div>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">API Base URL</label>
+          <input class="settings-input" id="settingsBaseUrl" type="text" placeholder="https://api.anthropic.com" autocomplete="off" spellcheck="false">
+          <div class="settings-hint">API 服务地址，默认使用中转站</div>
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">模型</label>
+          <input class="settings-input" id="settingsModel" type="text" placeholder="claude-opus-4-5-20251101" autocomplete="off" spellcheck="false">
+          <div class="settings-hint">默认 Claude Opus 4.5</div>
+        </div>
+        <button class="settings-save" id="settingsSave">保存</button>
+        <div class="settings-msg" id="settingsMsg"></div>
+        <div class="settings-footer">
+          <span class="settings-footer-label">开发者微信</span>
+          <span class="settings-footer-value">abcdezhenn</span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="./app.js"></script>
 </body>

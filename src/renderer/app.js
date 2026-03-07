@@ -5,6 +5,7 @@ const sendBtn = document.getElementById("send");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 const imgPreviews = document.getElementById("img-previews");
+const settingsOverlay = document.getElementById("settingsOverlay");
 
 let pastedImages = [];
 let lastClients = [];
@@ -1850,6 +1851,46 @@ function showOnboarding(onDone) {
   cta.addEventListener("click", () => { clearInterval(autoTimer); finish(); });
   skip.addEventListener("click", () => { clearInterval(autoTimer); finish(); });
 }
+
+// --- Settings panel ---
+document.getElementById("settingsBtn").addEventListener("click", async () => {
+  try {
+    const s = await window.herAPI.getSettings();
+    document.getElementById("settingsApiKey").value = s.apiKey || "";
+    document.getElementById("settingsBaseUrl").value = s.baseURL || "";
+    document.getElementById("settingsModel").value = s.model || "";
+    document.getElementById("settingsMsg").textContent = "";
+  } catch (_) {}
+  settingsOverlay.classList.add("open");
+});
+
+document.getElementById("settingsClose").addEventListener("click", () => {
+  settingsOverlay.classList.remove("open");
+});
+
+settingsOverlay.addEventListener("click", (e) => {
+  if (e.target === settingsOverlay) settingsOverlay.classList.remove("open");
+});
+
+document.getElementById("settingsSave").addEventListener("click", async () => {
+  const btn = document.getElementById("settingsSave");
+  const msgEl = document.getElementById("settingsMsg");
+  btn.disabled = true;
+  msgEl.textContent = "";
+  try {
+    await window.herAPI.saveSettings({
+      apiKey: document.getElementById("settingsApiKey").value.trim(),
+      baseURL: document.getElementById("settingsBaseUrl").value.trim(),
+      model: document.getElementById("settingsModel").value.trim(),
+    });
+    msgEl.textContent = "已保存";
+    setTimeout(() => { settingsOverlay.classList.remove("open"); }, 800);
+  } catch (e) {
+    msgEl.textContent = e.message || "保存失败";
+    msgEl.style.color = "#f87171";
+  }
+  btn.disabled = false;
+});
 
 async function bootstrapApp() {
   try {

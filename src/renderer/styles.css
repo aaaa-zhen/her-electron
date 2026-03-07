@@ -43,7 +43,7 @@ header{
   flex:1;overflow-y:auto;overflow-x:hidden;
   padding:16px 16px 24px;
   scroll-behavior:auto;
-  overscroll-behavior:contain;
+  overscroll-behavior:auto;
   -webkit-overflow-scrolling:touch;
   contain:layout style;
   will-change:scroll-position;
@@ -899,3 +899,56 @@ header{
 .apikey-submit:hover{opacity:.9}
 .apikey-submit:disabled{opacity:.5;cursor:wait}
 .apikey-error{font-size:13px;color:#f87171;min-height:20px}
+
+/* --- Settings Panel --- */
+.settings-overlay{
+  display:none;position:fixed;inset:0;z-index:400;
+  background:rgba(0,0,0,.6);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  align-items:center;justify-content:center;
+}
+.settings-overlay.open{display:flex}
+.settings-panel{
+  width:100%;max-width:400px;margin:0 16px;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:20px;overflow:hidden;
+  animation:slashIn .2s ease-out;
+}
+.settings-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px;border-bottom:1px solid var(--border);
+}
+.settings-title{font-size:16px;font-weight:700;color:#fff}
+.settings-close{
+  background:none;border:none;color:var(--text3);
+  font-size:22px;cursor:pointer;padding:0 4px;
+  transition:color .15s;line-height:1;
+}
+.settings-close:hover{color:var(--text)}
+.settings-body{padding:20px;display:flex;flex-direction:column;gap:18px}
+.settings-group{display:flex;flex-direction:column;gap:6px}
+.settings-label{font-size:13px;font-weight:700;color:#fff}
+.settings-input{
+  width:100%;padding:11px 14px;border-radius:12px;
+  border:1px solid var(--border);background:rgba(255,255,255,.03);
+  color:var(--text);font-size:13px;font-family:inherit;
+  outline:none;transition:border-color .2s;
+}
+.settings-input::placeholder{color:var(--text3)}
+.settings-input:focus{border-color:rgba(110,231,183,.3)}
+.settings-hint{font-size:11px;color:var(--text3)}
+.settings-save{
+  padding:11px;border-radius:12px;border:none;cursor:pointer;
+  background:var(--accent);color:#062018;
+  font-size:14px;font-weight:700;font-family:inherit;
+  transition:opacity .15s;
+}
+.settings-save:hover{opacity:.9}
+.settings-save:disabled{opacity:.5;cursor:wait}
+.settings-msg{font-size:13px;color:var(--accent);min-height:20px;text-align:center}
+.settings-footer{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  padding-top:12px;border-top:1px solid var(--border);
+  font-size:12px;color:var(--text3);
+}
+.settings-footer-value{color:var(--accent);font-weight:600;user-select:all}

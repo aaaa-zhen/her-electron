@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld("herAPI", {
   bootstrap: () => ipcRenderer.invoke("her:bootstrap"),
   saveRelationshipProfile: (payload) => ipcRenderer.invoke("her:save-relationship-profile", payload),
   saveApiKey: (apiKey) => ipcRenderer.invoke("her:save-api-key", apiKey),
+  getSettings: () => ipcRenderer.invoke("her:get-settings"),
+  saveSettings: (patch) => ipcRenderer.invoke("her:save-settings", patch),
   sendMessage: (payload) => ipcRenderer.send("her:send-message", payload),
   cancel: () => ipcRenderer.send("her:cancel"),
   uploadFile: (payload) => ipcRenderer.invoke("her:upload-file", payload),
