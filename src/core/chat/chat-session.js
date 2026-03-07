@@ -377,6 +377,8 @@ class ChatSession extends EventEmitter {
 
     this.handleScheduleResult = (event) => this.emit("event", event);
     this.scheduleService.on("result", this.handleScheduleResult);
+    this._repairToolResults();
+    this.stores.conversationStore.save(this.conversationHistory);
     this.syncScheduleMemory();
   }
 
@@ -386,6 +388,37 @@ class ChatSession extends EventEmitter {
 
   _repairToolResults() {
     const history = this.conversationHistory;
+    let removedOrphans = 0;
+
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role !== "user" || !Array.isArray(msg.content)) continue;
+
+      const toolResultBlocks = msg.content.filter((b) => b.type === "tool_result");
+      if (toolResultBlocks.length === 0) continue;
+
+      const prev = history[i - 1];
+      const validToolIds = new Set(
+        prev && prev.role === "assistant" && Array.isArray(prev.content)
+          ? prev.content.filter((b) => b.type === "tool_use" && b.id).map((b) => b.id)
+          : []
+      );
+
+      const nextContent = msg.content.filter((block) => {
+        if (block.type !== "tool_result") return true;
+        return block.tool_use_id && validToolIds.has(block.tool_use_id);
+      });
+
+      if (nextContent.length !== msg.content.length) {
+        removedOrphans += msg.content.length - nextContent.length;
+        if (nextContent.length === 0) {
+          history.splice(i, 1);
+        } else {
+          msg.content = nextContent;
+        }
+      }
+    }
+
     for (let i = 0; i < history.length; i++) {
       const msg = history[i];
       if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
@@ -416,6 +449,10 @@ class ChatSession extends EventEmitter {
         history.splice(i + 1, 0, { role: "user", content: patchResults });
       }
       console.log(`[Chat] Repaired ${missing.length} missing tool_result(s)`);
+    }
+
+    if (removedOrphans > 0) {
+      console.log(`[Chat] Removed ${removedOrphans} orphan tool_result block(s)`);
     }
   }
 
@@ -909,6 +946,7 @@ class ChatSession extends EventEmitter {
       });
       if (compacted.compacted) {
         this.conversationHistory = compacted.newHistory;
+        this._repairToolResults();
       }
 
       console.log(`[Tokens] ~${estimateTotalTokens(this.conversationHistory)} (${this.conversationHistory.length} msgs)`);
