@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = "claude-opus-4-6";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
 const SUMMARY_MODEL = "claude-haiku-4-5-20251001";
 
 const INPUT_COST_PER_TOKEN = 3 / 1_000_000;

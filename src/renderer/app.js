@@ -1459,7 +1459,7 @@ async function send(text) {
       originalName: image.name || "",
     })),
     passiveContext: currentPassiveContext,
-    model: document.getElementById("modelSelect").dataset.value || "claude-opus-4-5-20251101",
+    model: document.getElementById("modelSelect").dataset.value || "claude-sonnet-4-6",
   });
 
   input.value = "";
