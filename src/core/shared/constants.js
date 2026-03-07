@@ -1,0 +1,12 @@
+const DEFAULT_MODEL = "claude-opus-4-6";
+const SUMMARY_MODEL = "claude-haiku-4-5-20251001";
+
+const INPUT_COST_PER_TOKEN = 3 / 1_000_000;
+const OUTPUT_COST_PER_TOKEN = 15 / 1_000_000;
+
+module.exports = {
+  DEFAULT_MODEL,
+  SUMMARY_MODEL,
+  INPUT_COST_PER_TOKEN,
+  OUTPUT_COST_PER_TOKEN,
+};
