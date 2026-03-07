@@ -44,10 +44,13 @@ async function compactConversation({ conversationHistory, anthropic, emit }) {
     }
   }
 
-  while (cutIndex < conversationHistory.length) {
+  // Ensure cut doesn't split a tool_use / tool_result pair.
+  // If recentMessages starts with a tool_result, pull back to include the matching assistant tool_use.
+  while (cutIndex > 0 && cutIndex < conversationHistory.length) {
     const message = conversationHistory[cutIndex];
     if (message.role === "user" && Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result")) {
-      cutIndex += 1;
+      // Pull cutIndex back to include the preceding assistant message (which should have tool_use)
+      cutIndex -= 1;
       continue;
     }
     break;
