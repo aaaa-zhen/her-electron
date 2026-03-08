@@ -1282,6 +1282,8 @@ function handle(data) {
 
   if (data.type === "error") {
     removePhase();
+    finishCmd();
+    removeThinking();
     const group = getHerGroup();
     const text = document.createElement("div");
     text.className = "md";

@@ -143,6 +143,78 @@ function toPlainText(content) {
     .join("\n");
 }
 
+function hasRenderableAssistantText(content) {
+  if (typeof content === "string") return Boolean(content.trim());
+  if (!Array.isArray(content)) return false;
+  return content.some((block) => block.type === "text" && String(block.text || "").trim());
+}
+
+function looksLikeToolFailure(result) {
+  if (!result) return true;
+  if (result.is_error) return true;
+
+  const text = String(result.content || "").trim();
+  if (!text) return true;
+
+  return /^(No results for:|No news found for:|Could not extract text\.?|Web search failed:|Read failed:|News search failed:|Invalid URL|Missing required parameter|Error: )/i.test(text);
+}
+
+function summarizeToolResultPreview(block, result) {
+  const text = String(result && result.content ? result.content : "").trim();
+  if (!text) return "";
+
+  if (block.name === "search_news") {
+    return "相关新闻结果已经展示在上面了，你可以直接点开。";
+  }
+
+  if (block.name === "search_web") {
+    return `搜索结果：\n${text.slice(0, 1200)}`;
+  }
+
+  if (block.name === "read_url") {
+    return `网页内容片段：\n${text.slice(0, 900)}`;
+  }
+
+  return text.slice(0, 900);
+}
+
+function buildSyntheticToolReply(toolBlocks = [], toolResults = []) {
+  const pairs = toolBlocks
+    .map((block, index) => ({ block, result: toolResults[index] }))
+    .filter(({ block, result }) => block && result);
+
+  const toolSummary = summarizeToolBlocks(toolBlocks);
+  const successful = pairs.filter(({ result }) => !looksLikeToolFailure(result));
+
+  if (successful.length === 0) {
+    const firstFailure = pairs
+      .map(({ result }) => String(result.content || "").trim())
+      .find(Boolean);
+
+    return [{
+      type: "text",
+      text: [
+        `我刚才已经完成了${toolSummary}，但这次没拿到可用结果。`,
+        firstFailure ? `原因大概是：${firstFailure.slice(0, 220)}` : "",
+      ].filter(Boolean).join("\n\n"),
+    }];
+  }
+
+  const previews = [];
+  for (const { block, result } of successful.slice(0, 3)) {
+    const preview = summarizeToolResultPreview(block, result);
+    if (preview) previews.push(preview);
+  }
+
+  return [{
+    type: "text",
+    text: [
+      `我刚才已经完成了${toolSummary}。`,
+      previews.length > 0 ? `先把拿到的结果直接给你：\n\n${previews.join("\n\n")}` : "上面的步骤已经执行完了。",
+    ].join("\n\n"),
+  }];
+}
+
 function sanitizeJsonString(value) {
   return String(value || "")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
@@ -958,6 +1030,8 @@ class ChatSession extends EventEmitter {
       this.emitUsage(response);
       let toolRoundCount = 0;
       let newsToolCallCount = 0;
+      let lastToolBlocks = [];
+      let lastToolResults = [];
 
       while (response && response.stop_reason === "tool_use" && !this.cancelled) {
         this.conversationHistory.push({ role: "assistant", content: response.content });
@@ -979,6 +1053,8 @@ class ChatSession extends EventEmitter {
             is_error: false,
           }));
 
+          lastToolBlocks = toolBlocks;
+          lastToolResults = forcedResults;
           this.conversationHistory.push({ role: "user", content: forcedResults });
           this.emit("event", {
             type: "phase",
@@ -1016,6 +1092,8 @@ class ChatSession extends EventEmitter {
         }
 
         this.conversationHistory.push({ role: "user", content: toolResults });
+        lastToolBlocks = toolBlocks;
+        lastToolResults = toolResults;
         this.emit("event", {
           type: "phase",
           label: "整理结果",
@@ -1027,6 +1105,18 @@ class ChatSession extends EventEmitter {
         response = await this.streamResponse(this.currentAbort.signal, model);
         this.currentAbort = null;
         this.emitUsage(response);
+      }
+
+      if (
+        response
+        && !this.cancelled
+        && lastToolResults.length > 0
+        && !hasRenderableAssistantText(response.content)
+      ) {
+        response = {
+          ...response,
+          content: buildSyntheticToolReply(lastToolBlocks, lastToolResults),
+        };
       }
 
       if (response && !this.cancelled) {

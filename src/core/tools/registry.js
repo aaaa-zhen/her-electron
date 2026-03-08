@@ -611,6 +611,59 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
     return "";
   }
 
+  function extractCurlFailure(output) {
+    const text = String(output || "").trim();
+    if (!text) return "";
+
+    const failureLine = text
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => /curl:\s*\(\d+\)|Could not resolve host|Failed to connect|Connection refused|proxyconnect|timed out|Connection reset|SSL|Empty reply from server/i.test(line));
+
+    return failureLine || "";
+  }
+
+  function parseDuckDuckGoResults(html, numResults) {
+    const results = [];
+    const regex = /<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    let match;
+
+    while ((match = regex.exec(html)) !== null && results.length < numResults) {
+      const href = match[1].replace(/\/\/duckduckgo\.com\/l\/\?uddg=/, "").split("&")[0];
+      const title = stripTags(match[2]).trim();
+      const snippet = stripTags(match[3]).trim();
+      try {
+        results.push({ title, url: decodeURIComponent(href), snippet });
+      } catch {
+        results.push({ title, url: href, snippet });
+      }
+    }
+
+    return results.filter((result) => result.title && result.url);
+  }
+
+  function parseBingSearchResults(html, numResults) {
+    const results = [];
+    const blocks = html.match(/<li class="b_algo"[\s\S]*?<\/li>/g) || [];
+
+    for (const block of blocks) {
+      if (results.length >= numResults) break;
+      const titleMatch = block.match(/<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+      if (!titleMatch) continue;
+
+      const snippetMatch = block.match(/<div class="b_caption"[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/i)
+        || block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+
+      results.push({
+        title: stripTags(titleMatch[2]).trim(),
+        url: decodeHtml(titleMatch[1]).trim(),
+        snippet: stripTags(snippetMatch ? snippetMatch[1] : "").trim(),
+      });
+    }
+
+    return results.filter((result) => result.title && /^https?:\/\//i.test(result.url));
+  }
+
   async function searchNews(query, numResults = 5) {
     const limitedResults = Math.max(1, Math.min(Number(numResults) || 5, 8));
 
@@ -621,6 +674,8 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
         `curl -Ls --max-time 15 -H "User-Agent: Mozilla/5.0" "${bingUrl}"`,
         { timeout: 20000, cwd: paths.sharedDir }
       );
+      const bingFailure = extractCurlFailure(bingRss);
+      if (bingFailure) throw new Error(bingFailure);
 
       if (bingRss.includes("<item>")) {
         const items = [];
@@ -647,6 +702,8 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
     // Fallback: Google News RSS
     const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans`;
     const rss = await execAsync(`curl -Ls --max-time 20 "${rssUrl}"`, { timeout: 25000, cwd: paths.sharedDir });
+    const rssFailure = extractCurlFailure(rss);
+    if (rssFailure) throw new Error(rssFailure);
     const items = [];
     const itemRegex = /<item>([\s\S]*?)<\/item>/g;
     let match;
@@ -1078,38 +1135,35 @@ echo "Alarm set"`;
 
     if (block.name === "search_web") {
       const { query, num_results = 5 } = block.input;
-      const encoded = encodeURIComponent(query);
-      const command = `curl -sL "https://html.duckduckgo.com/html/?q=${encoded}" -H "User-Agent: Mozilla/5.0" | head -c 100000`;
-      emitCommand(command, "搜索网页", query);
-      const html = await execAsync(command, { timeout: 15000, cwd: paths.sharedDir });
-      const results = [];
-      const regex = /<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-      let match;
-      while ((match = regex.exec(html)) !== null && results.length < Math.min(num_results, 10)) {
-        const href = match[1].replace(/\/\/duckduckgo\.com\/l\/\?uddg=/, "").split("&")[0];
-        const title = match[2].replace(/<[^>]+>/g, "").trim();
-        const snippet = match[3].replace(/<[^>]+>/g, "").trim();
-        try {
-          results.push({ title, url: decodeURIComponent(href), snippet });
-        } catch (error) {
-          results.push({ title, url: href, snippet });
+      const limit = Math.min(Number(num_results) || 5, 10);
+      emitCommand(`search_web: ${query}`, "搜索网页", query);
+      try {
+        const proxyUrl = `http://43.134.52.155:3941/search?q=${encodeURIComponent(query)}&n=${limit}`;
+        const raw = await execAsync(`curl -sL --max-time 20 "${proxyUrl}"`, { timeout: 25000 });
+        const data = JSON.parse(raw);
+        const results = data.results || [];
+        if (results.length === 0) {
+          return { type: "tool_result", tool_use_id: block.id, content: `No results for: "${query}"` };
         }
+        return {
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: results.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet}`).join("\n\n"),
+        };
+      } catch (error) {
+        return { type: "tool_result", tool_use_id: block.id, content: `Web search failed: ${error.message}`, is_error: true };
       }
-      if (results.length === 0) {
-        return { type: "tool_result", tool_use_id: block.id, content: `No results for: "${query}"` };
-      }
-      return {
-        type: "tool_result",
-        tool_use_id: block.id,
-        content: results.map((result, index) => `${index + 1}. **${result.title}**\n   ${result.url}\n   ${result.snippet}`).join("\n\n"),
-      };
     }
 
     if (block.name === "search_news") {
       const { query, num_results = 5 } = block.input;
+      const limit = Math.min(Number(num_results) || 5, 10);
       emitCommand(`search_news: ${query}`, "搜索新闻", query);
       try {
-        const cards = await searchNews(query, num_results);
+        const proxyUrl = `http://43.134.52.155:3941/news?q=${encodeURIComponent(query)}&n=${limit}`;
+        const raw = await execAsync(`curl -sL --max-time 20 "${proxyUrl}"`, { timeout: 25000 });
+        const data = JSON.parse(raw);
+        const cards = data.results || [];
         emit({ type: "news_cards", query, cards });
         if (cards.length === 0) {
           return { type: "tool_result", tool_use_id: block.id, content: `No news found for: "${query}"` };
@@ -1128,22 +1182,19 @@ echo "Alarm set"`;
     }
 
     if (block.name === "read_url") {
-      const command = `curl -sL -m 15 -H "User-Agent: Mozilla/5.0 (compatible)" "${block.input.url}" | head -c 200000`;
-      emitCommand(command, "读取网页", block.input.url);
-      const html = await execAsync(command, { timeout: 20000, cwd: paths.sharedDir });
-      const text = html
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<style[\s\S]*?<\/style>/gi, "")
-        .replace(/<nav[\s\S]*?<\/nav>/gi, "")
-        .replace(/<footer[\s\S]*?<\/footer>/gi, "")
-        .replace(/<[^>]+>/g, "\n")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-      return { type: "tool_result", tool_use_id: block.id, content: text.slice(0, 15000) || "Could not extract text." };
+      emitCommand(`read_url: ${block.input.url}`, "读取网页", block.input.url);
+      try {
+        const proxyUrl = `http://43.134.52.155:3941/read?url=${encodeURIComponent(block.input.url)}`;
+        const raw = await execAsync(`curl -sL --max-time 20 "${proxyUrl}"`, { timeout: 25000 });
+        const data = JSON.parse(raw);
+        const text = (data.text || "").trim();
+        if (!text || text.startsWith("Error:")) {
+          return { type: "tool_result", tool_use_id: block.id, content: text || "Could not extract text.", is_error: true };
+        }
+        return { type: "tool_result", tool_use_id: block.id, content: text.slice(0, 15000) };
+      } catch (error) {
+        return { type: "tool_result", tool_use_id: block.id, content: `Read failed: ${error.message}`, is_error: true };
+      }
     }
 
     if (block.name === "schedule_task") {
