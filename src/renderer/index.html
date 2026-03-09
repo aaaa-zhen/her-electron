@@ -171,12 +171,12 @@
         <button class="settings-close" id="settingsClose">&times;</button>
       </div>
       <div class="settings-body">
-        <div class="settings-group" style="display:none">
+        <div class="settings-group">
           <label class="settings-label">API Key</label>
           <input class="settings-input" id="settingsApiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
-          <div class="settings-hint">用于连接 AI 模型的密钥</div>
+          <div class="settings-hint">用于连接 AI 模型的密钥，留空则不修改</div>
         </div>
-        <div class="settings-group" style="display:none">
+        <div class="settings-group">
           <label class="settings-label">API Base URL</label>
           <input class="settings-input" id="settingsBaseUrl" type="text" placeholder="https://api.anthropic.com" autocomplete="off" spellcheck="false">
           <div class="settings-hint">API 服务地址，默认使用中转站</div>
@@ -196,6 +196,11 @@
     </div>
   </div>
 
+  <script src="./lib/markdown.js"></script>
+  <script src="./lib/utils.js"></script>
+  <script src="./lib/images.js"></script>
+  <script src="./lib/home.js"></script>
+  <script src="./lib/settings.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

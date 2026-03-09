@@ -9,414 +9,11 @@ const { inferTurn } = require("./turn-inference");
 const { getSystemPrompt } = require("./system-prompt");
 const { createTools } = require("../tools/registry");
 
-const TOOL_LABELS = {
-  bash: "执行命令",
-  read_file: "查看文件",
-  write_file: "写入文件",
-  edit_file: "修改文件",
-  glob: "搜索文件",
-  grep: "搜索内容",
-  send_file: "发送文件",
-  schedule_task: "安排任务",
-  memory: "整理记忆",
-  download_media: "下载媒体",
-  convert_media: "处理媒体",
-  web_search: "搜索网页",
-  read_url: "读取网页",
-};
-
-const MAX_TOOL_ROUNDS = 4;
-const MAX_NEWS_TOOL_CALLS = 3;
-
-function getMessageText(message, images) {
-  const cleaned = (message || "").trim();
-  if (cleaned) return cleaned;
-  if (images && images.length > 0) {
-    const filenames = images.map((image) => image.filename).filter(Boolean);
-    if (filenames.length > 0) {
-      const suffix = filenames.join(", ");
-      return images.length === 1
-        ? `用户发送了一张图片，已保存为 ${suffix}`
-        : `用户发送了 ${images.length} 张图片，已保存为 ${suffix}`;
-    }
-    return images.length === 1 ? "用户发送了一张图片" : `用户发送了 ${images.length} 张图片`;
-  }
-  return "";
-}
-
-function detectMode(text) {
-  const lower = String(text || "").toLowerCase();
-  if (!lower) return "general";
-
-  if (/(代码|项目|组件|函数|bug|报错|异常|重构|优化|构建|调试|脚本|仓库|repo|commit|diff|debug|stack|trace|typescript|javascript|node|react|electron|css|html)/.test(lower)) {
-    return "builder";
-  }
-
-  if (/(终端|命令|文件|目录|下载|转换|网页|搜索|打开|安装|运行|执行|提醒|定时|cron|shell|bash|terminal|folder|upload)/.test(lower)) {
-    return "operator";
-  }
-
-  if (/(难过|开心|焦虑|烦|孤独|喜欢|想聊|陪我|觉得|情绪|关系|失眠|love|feel|sad|happy|anxious|lonely)/.test(lower)) {
-    return "companion";
-  }
-
-  return "general";
-}
-
-function formatPhaseDetail(text, memoryCount) {
-  const compact = String(text || "").replace(/\s+/g, " ").trim();
-  const preview = compact.length > 48 ? `${compact.slice(0, 48)}...` : compact;
-  if (preview && memoryCount > 0) return `${preview} · 已关联 ${memoryCount} 条历史上下文`;
-  if (preview) return preview;
-  if (memoryCount > 0) return `已关联 ${memoryCount} 条历史上下文`;
-  return "结合当前上下文组织回应";
-}
-
-function detectTransientState(text) {
-  const normalized = String(text || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return null;
-
-  if (/(我要睡了|我去睡了|睡觉了|先睡了|晚安|先休息了|我先睡|准备睡了)/.test(normalized)) {
-    return {
-      kind: "sleep",
-      summary: `用户刚刚说自己要去睡觉/休息了：${clipText(normalized, 72)}`,
-      replyHint: "如果用户又继续发消息，先轻轻接一句“还没睡呀？”、“你不是刚说要睡了吗，怎么又回来啦”之类，再继续回答。",
-    };
-  }
-
-  if (/(我先走了|先走了|先下了|先下线|先撤了|回头聊|晚点聊|等会再聊|稍后再聊|我先忙了)/.test(normalized)) {
-    return {
-      kind: "away",
-      summary: `用户刚刚说自己要先离开/晚点再聊：${clipText(normalized, 72)}`,
-      replyHint: "如果用户很快又回来，先轻轻承接一句“不是说先走吗，怎么又回来了”或“你又冒出来了”，不要太重。",
-    };
-  }
-
-  return null;
-}
-
-function findRecentTransientStateCue(conversationHistory = []) {
-  const recentUsers = conversationHistory
-    .filter((message) => message.role === "user")
-    .slice(-3)
-    .map((message) => {
-      const text = typeof message.content === "string" ? message.content : toPlainText(message.content);
-      return detectTransientState(text);
-    })
-    .filter(Boolean);
-
-  if (recentUsers.length === 0) return "";
-  const latest = recentUsers[recentUsers.length - 1];
-  return `${latest.summary} ${latest.replyHint}`;
-}
-
-function summarizeToolBlocks(toolBlocks) {
-  const labels = [...new Set(
-    toolBlocks
-      .map((block) => TOOL_LABELS[block.name] || block.name)
-      .filter(Boolean)
-  )];
-
-  if (labels.length === 0) return "准备处理请求";
-  if (labels.length === 1) return labels[0];
-  if (labels.length === 2) return `${labels[0]}、${labels[1]}`;
-  return `${labels[0]}、${labels[1]} 等 ${labels.length} 项操作`;
-}
-
-function isNewsTool(name) {
-  return name === "web_search" || name === "read_url";
-}
-
-function clipText(text, limit = 72) {
-  const compact = String(text || "").replace(/\s+/g, " ").trim();
-  if (!compact) return "";
-  return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
-}
-
-function toPlainText(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
-}
-
-function hasRenderableAssistantText(content) {
-  if (typeof content === "string") return Boolean(content.trim());
-  if (!Array.isArray(content)) return false;
-  return content.some((block) => block.type === "text" && String(block.text || "").trim());
-}
-
-function looksLikeToolFailure(result) {
-  if (!result) return true;
-  if (result.is_error) return true;
-
-  const text = String(result.content || "").trim();
-  if (!text) return true;
-
-  return /^(No results for:|No news found for:|Could not extract text\.?|Web search failed:|Read failed:|News search failed:|Invalid URL|Missing required parameter|Error: )/i.test(text);
-}
-
-function summarizeToolResultPreview(block, result) {
-  const text = String(result && result.content ? result.content : "").trim();
-  if (!text) return "";
-
-  if (block.name === "search_news") {
-    return "相关新闻结果已经展示在上面了，你可以直接点开。";
-  }
-
-  if (block.name === "search_web") {
-    return `搜索结果：\n${text.slice(0, 1200)}`;
-  }
-
-  if (block.name === "read_url") {
-    return `网页内容片段：\n${text.slice(0, 900)}`;
-  }
-
-  return text.slice(0, 900);
-}
-
-function buildSyntheticToolReply(toolBlocks = [], toolResults = []) {
-  const pairs = toolBlocks
-    .map((block, index) => ({ block, result: toolResults[index] }))
-    .filter(({ block, result }) => block && result);
-
-  const toolSummary = summarizeToolBlocks(toolBlocks);
-  const successful = pairs.filter(({ result }) => !looksLikeToolFailure(result));
-
-  if (successful.length === 0) {
-    const firstFailure = pairs
-      .map(({ result }) => String(result.content || "").trim())
-      .find(Boolean);
-
-    return [{
-      type: "text",
-      text: [
-        `我刚才已经完成了${toolSummary}，但这次没拿到可用结果。`,
-        firstFailure ? `原因大概是：${firstFailure.slice(0, 220)}` : "",
-      ].filter(Boolean).join("\n\n"),
-    }];
-  }
-
-  const previews = [];
-  for (const { block, result } of successful.slice(0, 3)) {
-    const preview = summarizeToolResultPreview(block, result);
-    if (preview) previews.push(preview);
-  }
-
-  return [{
-    type: "text",
-    text: [
-      `我刚才已经完成了${toolSummary}。`,
-      previews.length > 0 ? `先把拿到的结果直接给你：\n\n${previews.join("\n\n")}` : "上面的步骤已经执行完了。",
-    ].join("\n\n"),
-  }];
-}
-
-function sanitizeJsonString(value) {
-  return String(value || "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
-    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
-    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD");
-}
-
-function sanitizeForJson(value) {
-  if (typeof value === "string") return sanitizeJsonString(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizeForJson(item));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, nested]) => [key, sanitizeForJson(nested)])
-    );
-  }
-  return value;
-}
-
-function formatScheduleNote(task) {
-  if (!task) return "";
-  if (task.cron) return `${task.description} · cron ${task.cron}`;
-  if (task.runAt) return `${task.description} · ${task.runAt}`;
-  return task.description || "";
-}
-
-function summarizeArtifact(memory) {
-  const filename = memory.meta && memory.meta.filename ? memory.meta.filename : clipText(memory.key.replace(/^artifact:/, ""), 28);
-  const detail = clipText(memory.value || memory.key, 72);
-  return {
-    title: filename,
-    detail,
-    kind: memory.meta && memory.meta.kind ? memory.meta.kind : "file",
-    prompt: `把文件 ${filename} 发给我，并告诉我它和最近什么任务有关`,
-  };
-}
-
-function summarizeTask(memory) {
-  return {
-    title: clipText(memory.key.replace(/^task:/, "").replace(/^[^:]+:/, ""), 28) || "最近完成",
-    detail: clipText(memory.value || memory.key, 80),
-    prompt: `继续这个已完成事项相关的后续：${memory.value || memory.key}`,
-  };
-}
-
-function normalizeRelationshipProfile(profile = {}) {
-  const cleaned = {
-    tone: clipText(profile.tone || "", 40),
-    relationshipMode: clipText(profile.relationshipMode || "", 40),
-    proactivity: clipText(profile.proactivity || "", 40),
-    currentFocus: clipText(profile.currentFocus || "", 140),
-  };
-
-  if (!cleaned.currentFocus) cleaned.currentFocus = "最近的重点会慢慢告诉你";
-  return cleaned;
-}
-
-function sortTodosForPrompt(todos = []) {
-  return [...todos].sort((a, b) => {
-    const timeA = a && a.dueDate ? new Date(a.dueDate).getTime() : Number.POSITIVE_INFINITY;
-    const timeB = b && b.dueDate ? new Date(b.dueDate).getTime() : Number.POSITIVE_INFINITY;
-    if (timeA !== timeB) return timeA - timeB;
-    const createdA = a && a.created ? new Date(a.created).getTime() : 0;
-    const createdB = b && b.created ? new Date(b.created).getTime() : 0;
-    return createdB - createdA;
-  });
-}
-
-function isSameLocalDay(dateLike, now = new Date()) {
-  const value = new Date(dateLike);
-  if (Number.isNaN(value.getTime())) return false;
-  return value.getFullYear() === now.getFullYear()
-    && value.getMonth() === now.getMonth()
-    && value.getDate() === now.getDate();
-}
-
-function getTodoTimelineTime(todo) {
-  const candidates = [todo && todo.dueDate, todo && todo.completedAt, todo && todo.created];
-  for (const value of candidates) {
-    const time = new Date(value || "").getTime();
-    if (!Number.isNaN(time)) return time;
-  }
-  return Number.POSITIVE_INFINITY;
-}
-
-function normalizeTodayTodo(todo) {
-  const dueAt = todo && todo.dueDate ? new Date(todo.dueDate).getTime() : NaN;
-  let status = "today";
-  if (todo && todo.done) status = "done";
-  else if (!Number.isNaN(dueAt) && dueAt < Date.now()) status = "past";
-  else if (!Number.isNaN(dueAt)) status = "upcoming";
-  return {
-    kind: "todo",
-    title: todo.title,
-    detail: todo.detail || "",
-    dueDate: todo.dueDate || todo.completedAt || todo.created || "",
-    status,
-    id: todo.id || "",
-  };
-}
-
-function normalizeTodayCalendarEvent(event) {
-  const startAt = event && (event.startAt || event.startDate) ? new Date(event.startAt || event.startDate).getTime() : NaN;
-  let status = "today";
-  if (!Number.isNaN(startAt) && startAt < Date.now()) status = "past";
-  else if (!Number.isNaN(startAt)) status = "upcoming";
-  const detailParts = [];
-  if (event && event.location) detailParts.push(`location: ${event.location}`);
-  if (event && event.calendar) detailParts.push(`calendar: ${event.calendar}`);
-  return {
-    kind: "calendar",
-    title: event.title,
-    detail: detailParts.join(" | "),
-    dueDate: event.startAt || event.startDate || "",
-    status,
-    id: `${event.calendar || "calendar"}:${event.title || ""}:${event.startAt || event.startDate || ""}`,
-  };
-}
-
-function buildTodayCommitments(todoStore, calendar = [], limit = 6) {
-  const now = new Date();
-  const items = [];
-
-  if (todoStore && typeof todoStore.listAll === "function") {
-    items.push(...todoStore.listAll()
-      .filter((todo) => {
-        if (!todo) return false;
-        return isSameLocalDay(todo.dueDate, now)
-          || isSameLocalDay(todo.completedAt, now)
-          || isSameLocalDay(todo.created, now);
-      })
-      .map((todo) => normalizeTodayTodo(todo)));
-  }
-
-  if (Array.isArray(calendar)) {
-    items.push(...calendar
-      .filter((event) => event && event.title && isSameLocalDay(event.startAt || event.startDate, now))
-      .map((event) => normalizeTodayCalendarEvent(event)));
-  }
-
-  return items
-    .sort((a, b) => getTodoTimelineTime(a) - getTodoTimelineTime(b))
-    .slice(0, limit);
-}
-
-function syncTimelineEvents({ memoryStore, todayCommitments = [] }) {
-  if (!memoryStore || typeof memoryStore.saveTimelineEvent !== "function") return;
-  for (const item of todayCommitments) {
-    memoryStore.saveTimelineEvent({
-      key: item.kind === "todo"
-        ? `timeline:todo:${item.id || item.title}`
-        : `timeline:calendar:${item.id || item.title}`,
-      title: item.title,
-      at: item.dueDate,
-      detail: item.detail,
-      source: item.kind,
-      status: item.status,
-      meta: { id: item.id || "", kind: item.kind },
-    });
-  }
-}
-
-function normalizeBrowserContext(context) {
-  if (!context || typeof context !== "object") return null;
-  const normalized = {
-    title: clipText(context.title || "", 180),
-    url: clipText(context.url || "", 400),
-    description: clipText(context.description || "", 220),
-    snippet: clipText(context.snippet || "", 320),
-    domainLabel: clipText(context.domainLabel || "", 40),
-    kind: clipText(context.kind || "", 40),
-    appName: clipText(context.appName || "", 40),
-  };
-  return normalized.url ? normalized : null;
-}
-
-function buildRelationshipMemoryEntries(profile) {
-  return [
-    {
-      key: "关系设定:表达方式",
-      value: `用户希望我用“${profile.tone}”的方式和 ta 说话`,
-      type: "preference",
-      tags: ["relationship_setup", "preference", "tone"],
-    },
-    {
-      key: "关系设定:互动角色",
-      value: `用户更希望我像“${profile.relationshipMode}”那样陪着 ta`,
-      type: "preference",
-      tags: ["relationship_setup", "preference", "relationship_mode"],
-    },
-    {
-      key: "关系设定:主动程度",
-      value: `用户希望我的主动程度是“${profile.proactivity}”`,
-      type: "preference",
-      tags: ["relationship_setup", "preference", "proactivity"],
-    },
-    {
-      key: "关系设定:当前主线",
-      value: `用户最近最希望我陪着处理的是：${profile.currentFocus}`,
-      type: "relationship",
-      tags: ["relationship_setup", "relationship", "current_focus"],
-    },
-  ];
-}
+// Split-out utilities
+const { clipText, toPlainText, hasRenderableAssistantText, sanitizeForJson, getMessageText, formatPhaseDetail, formatScheduleNote } = require("./text-utils");
+const { TOOL_LABELS, MAX_TOOL_ROUNDS, MAX_NEWS_TOOL_CALLS, summarizeToolBlocks, isNewsTool, buildSyntheticToolReply } = require("./tool-utils");
+const { sortTodosForPrompt, buildTodayCommitments, syncTimelineEvents } = require("./timeline-utils");
+const { detectMode, findRecentTransientStateCue, normalizeBrowserContext, normalizeRelationshipProfile, buildRelationshipMemoryEntries, summarizeArtifact, summarizeTask } = require("./session-helpers");
 
 class ChatSession extends EventEmitter {
   constructor({ paths, stores, createAnthropicClient, scheduleService, environmentMonitor, awarenessService }) {
@@ -576,16 +173,16 @@ class ChatSession extends EventEmitter {
 
     if (primaryLoop) {
       const loopText = clipText(primaryLoop.value || primaryLoop.key, 48);
-      greeting = `你上次停在“${loopText}”。要继续吗？`;
+      greeting = `你上次停在"${loopText}"。要继续吗？`;
       status = "我把你最近没收尾的事记着了。";
     } else if (relationshipProfile) {
-      greeting = `我会按“${relationshipProfile.tone}”的方式陪你。`;
+      greeting = `我会按"${relationshipProfile.tone}"的方式陪你。`;
       status = relationshipProfile.currentFocus
-        ? `你最近最想推进的是“${clipText(relationshipProfile.currentFocus, 52)}”。`
+        ? `你最近最想推进的是"${clipText(relationshipProfile.currentFocus, 52)}"。`
         : "我会沿着你设定的关系方式继续陪你。";
     } else if (relationshipLead) {
       const note = clipText(relationshipLead.value || relationshipLead.key, 52);
-      greeting = `我记得你最近一直在想“${note}”。`;
+      greeting = `我记得你最近一直在想"${note}"。`;
       status = "如果你想继续理顺它，我可以接着往下。";
     } else if (taskLead) {
       const note = clipText(taskLead.value || taskLead.key, 54);
@@ -597,10 +194,10 @@ class ChatSession extends EventEmitter {
       status = "图片、视频、文件不只是临时传一下，而是能被我继续引用。";
     } else if (scheduleLead) {
       const note = clipText(scheduleLead.description, 48);
-      greeting = `我还挂着“${note}”这个定时任务。`;
+      greeting = `我还挂着"${note}"这个定时任务。`;
       status = "清空对话不会影响它继续跑。";
     } else if (primaryTopic) {
-      greeting = `你最近最常提的是“${primaryTopic.title}”。今天想继续推进吗？`;
+      greeting = `你最近最常提的是"${primaryTopic.title}"。今天想继续推进吗？`;
       status = "我可以继续陪你想，也可以直接动手。";
     }
 
@@ -634,7 +231,7 @@ class ChatSession extends EventEmitter {
     if (primaryTopic) {
       suggestions.push({
         label: "帮我推进",
-        prompt: `围绕“${primaryTopic.title}”帮我推进下一步`,
+        prompt: `围绕"${primaryTopic.title}"帮我推进下一步`,
         description: "把最近反复提到的事往前推",
       });
     }
@@ -661,21 +258,9 @@ class ChatSession extends EventEmitter {
       });
     }
     suggestions.push(
-      {
-        label: "整理桌面",
-        prompt: "帮我整理一下桌面，把文件归类到合适的目录",
-        description: "自动归类桌面上的文件",
-      },
-      {
-        label: "帮我做点事",
-        prompt: "帮我在电脑上推进一件具体的事",
-        description: "直接进入执行模式",
-      },
-      {
-        label: "聊聊现在",
-        prompt: "先不做任务，陪我聊聊我现在的状态",
-        description: "偏陪伴和关系感的开场",
-      }
+      { label: "整理桌面", prompt: "帮我整理一下桌面，把文件归类到合适的目录", description: "自动归类桌面上的文件" },
+      { label: "帮我做点事", prompt: "帮我在电脑上推进一件具体的事", description: "直接进入执行模式" },
+      { label: "聊聊现在", prompt: "先不做任务，陪我聊聊我现在的状态", description: "偏陪伴和关系感的开场" }
     );
 
     const uniqueSuggestions = [];
@@ -734,10 +319,7 @@ class ChatSession extends EventEmitter {
     return {
       profile: nextProfile,
       presence,
-      onboarding: {
-        needsSetup: false,
-        profile: nextProfile,
-      },
+      onboarding: { needsSetup: false, profile: nextProfile },
     };
   }
 
@@ -815,11 +397,7 @@ class ChatSession extends EventEmitter {
         } else if (block.name === "memory") {
           detail = input.key || "";
         }
-        if (detail) {
-          actions.push(`${label}: ${clipText(detail, 60)}`);
-        } else {
-          actions.push(label);
-        }
+        actions.push(detail ? `${label}: ${clipText(detail, 60)}` : label);
       }
     }
     return actions;
@@ -963,10 +541,7 @@ class ChatSession extends EventEmitter {
         passiveContext && Array.isArray(passiveContext.calendar) ? passiveContext.calendar : [],
         8
       );
-      syncTimelineEvents({
-        memoryStore: this.stores.memoryStore,
-        todayCommitments,
-      });
+      syncTimelineEvents({ memoryStore: this.stores.memoryStore, todayCommitments });
       let relevantMemories = this.stores.memoryStore.getContextual(messageText, 12);
       try {
         const semantic = await this.stores.memoryStore.getContextualSemantic(messageText, 12);
@@ -1025,8 +600,6 @@ class ChatSession extends EventEmitter {
         : message;
 
       this.conversationHistory.push({ role: "user", content: userContent });
-
-      // Repair: ensure every tool_use has a matching tool_result
       this._repairToolResults();
 
       const compacted = await compactConversation({
@@ -1074,11 +647,7 @@ class ChatSession extends EventEmitter {
           lastToolBlocks = toolBlocks;
           lastToolResults = forcedResults;
           this.conversationHistory.push({ role: "user", content: forcedResults });
-          this.emit("event", {
-            type: "phase",
-            label: "整理结果",
-            detail: "信息已经足够，正在直接组织答复",
-          });
+          this.emit("event", { type: "phase", label: "整理结果", detail: "信息已经足够，正在直接组织答复" });
           this.emit("event", { type: "thinking" });
 
           this.currentAbort = new AbortController();
@@ -1086,7 +655,7 @@ class ChatSession extends EventEmitter {
           this.currentAbort = null;
           this.emitUsage(response);
 
-          // Force model to stop calling tools — up to 3 attempts
+          // Force model to stop calling tools
           for (let forceRound = 0; forceRound < 3 && response && response.stop_reason === "tool_use"; forceRound++) {
             this.conversationHistory.push({ role: "assistant", content: response.content });
             const stubResults = response.content
@@ -1101,11 +670,7 @@ class ChatSession extends EventEmitter {
           break;
         }
 
-        this.emit("event", {
-          type: "phase",
-          label: "正在处理",
-          detail: toolSummary,
-        });
+        this.emit("event", { type: "phase", label: "正在处理", detail: toolSummary });
 
         const toolResults = this.cancelled
           ? []
@@ -1130,11 +695,7 @@ class ChatSession extends EventEmitter {
         this.conversationHistory.push({ role: "user", content: toolResults });
         lastToolBlocks = toolBlocks;
         lastToolResults = toolResults;
-        this.emit("event", {
-          type: "phase",
-          label: "整理结果",
-          detail: `已完成${toolSummary}，正在组织答复`,
-        });
+        this.emit("event", { type: "phase", label: "整理结果", detail: `已完成${toolSummary}，正在组织答复` });
         this.emit("event", { type: "thinking" });
 
         this.currentAbort = new AbortController();
@@ -1143,16 +704,8 @@ class ChatSession extends EventEmitter {
         this.emitUsage(response);
       }
 
-      if (
-        response
-        && !this.cancelled
-        && lastToolResults.length > 0
-        && !hasRenderableAssistantText(response.content)
-      ) {
-        response = {
-          ...response,
-          content: buildSyntheticToolReply(lastToolBlocks, lastToolResults),
-        };
+      if (response && !this.cancelled && lastToolResults.length > 0 && !hasRenderableAssistantText(response.content)) {
+        response = { ...response, content: buildSyntheticToolReply(lastToolBlocks, lastToolResults) };
       }
 
       if (response && !this.cancelled) {
@@ -1198,9 +751,7 @@ class ChatSession extends EventEmitter {
       this.currentAbort = null;
     }
     this.activeProcesses.forEach((processRef) => {
-      try {
-        processRef.kill("SIGTERM");
-      } catch (error) {}
+      try { processRef.kill("SIGTERM"); } catch (error) {}
     });
     this.activeProcesses = [];
     this.emit("event", { type: "phase", clear: true });
@@ -1260,7 +811,6 @@ class ChatSession extends EventEmitter {
     const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
     const anthropic = createAnthropicClient(this.stores.settingsStore);
 
-    // Combine custom tools with Claude's built-in web search
     const allTools = [
       ...this.tools.tools,
       { type: "web_search_20250305", name: "web_search", max_uses: 5 },
@@ -1294,7 +844,6 @@ class ChatSession extends EventEmitter {
     let stopReason = "end_turn";
     let usage = {};
 
-    // Buffered text emit — batch small deltas to reduce IPC overhead
     let textBuffer = "";
     let flushTimer = null;
     const flushText = () => {
@@ -1324,7 +873,6 @@ class ChatSession extends EventEmitter {
           currentToolId = block.id;
           currentToolJson = "";
         } else if (block.type === "web_search_tool_result") {
-          // Claude's built-in web search result — pass through as content block
           currentBlockType = "web_search_result";
         }
       } else if (event.type === "content_block_delta") {
@@ -1332,7 +880,6 @@ class ChatSession extends EventEmitter {
         if (delta.type === "text_delta") {
           currentText += delta.text;
           textBuffer += delta.text;
-          // Flush immediately if buffer is large enough, otherwise batch with a short delay
           if (textBuffer.length >= 12) {
             if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
             flushText();
@@ -1343,7 +890,6 @@ class ChatSession extends EventEmitter {
           currentToolJson += delta.partial_json;
         }
       } else if (event.type === "content_block_stop") {
-        // Flush any remaining text
         if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
         flushText();
         if (currentBlockType === "text") {
@@ -1357,7 +903,6 @@ class ChatSession extends EventEmitter {
           currentToolId = "";
           currentToolJson = "";
         } else if (currentBlockType === "server_tool_use") {
-          // Built-in web search — handled server-side, no local execution needed
           let input = {};
           try { input = JSON.parse(currentToolJson); } catch {}
           contentBlocks.push({ type: "server_tool_use", id: currentToolId, name: currentToolName, input });
@@ -1365,7 +910,6 @@ class ChatSession extends EventEmitter {
           currentToolId = "";
           currentToolJson = "";
         } else if (currentBlockType === "web_search_result") {
-          // Search results from Claude's built-in search — already processed server-side
           contentBlocks.push(event.content_block || { type: "web_search_tool_result" });
         }
         currentBlockType = null;
@@ -1377,13 +921,11 @@ class ChatSession extends EventEmitter {
       }
     }
 
-    // Final flush
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
     flushText();
 
     if (!aborted) this.emit("event", { type: "stream_end" });
 
-    // Filter out server-side tool blocks (web_search) — they break history if resent
     const cleanedBlocks = contentBlocks.filter((b) =>
       b.type !== "server_tool_use" && b.type !== "web_search_tool_result"
     );
