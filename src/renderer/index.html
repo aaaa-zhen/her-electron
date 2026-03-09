@@ -177,9 +177,12 @@
           <div class="settings-hint">用于连接 AI 模型的密钥，留空则不修改</div>
         </div>
         <div class="settings-group">
-          <label class="settings-label">API Base URL</label>
-          <input class="settings-input" id="settingsBaseUrl" type="text" placeholder="https://api.anthropic.com" autocomplete="off" spellcheck="false">
-          <div class="settings-hint">API 服务地址，留空使用官方 api.anthropic.com</div>
+          <label class="settings-label">API 线路</label>
+          <select class="settings-input" id="settingsBaseUrl">
+            <option value="https://www.packyapi.com">中转站（免翻墙）</option>
+            <option value="https://api.anthropic.com">官方 API（需翻墙）</option>
+          </select>
+          <div class="settings-hint">中转站无需翻墙，官方线路需自备梯子</div>
         </div>
         <div class="settings-group">
           <label class="settings-label">模型</label>
@@ -188,6 +191,23 @@
         </div>
         <button class="settings-save" id="settingsSave">保存</button>
         <div class="settings-msg" id="settingsMsg"></div>
+
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <label class="settings-label">手机连接</label>
+          <div class="settings-hint">扫码将 Android 手机连接到此电脑，远程聊天</div>
+          <div id="pairSection">
+            <div id="pairUnpaired">
+              <button class="settings-save" id="pairGenerate" style="margin-top:8px">生成连接码</button>
+            </div>
+            <div id="pairPaired" style="display:none">
+              <div id="pairQrContainer" style="text-align:center;margin:12px 0"></div>
+              <div class="settings-hint" id="pairStatusText" style="text-align:center;margin-top:4px"></div>
+              <button class="settings-save" id="pairRevoke" style="margin-top:8px;background:#f87171">断开连接</button>
+            </div>
+          </div>
+        </div>
+
         <div class="settings-footer">
           <span class="settings-footer-label">开发者微信</span>
           <span class="settings-footer-value">abcdezhenn</span>

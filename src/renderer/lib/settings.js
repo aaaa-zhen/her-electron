@@ -134,6 +134,31 @@ function showOnboarding(onDone) {
   skip.addEventListener("click", () => { clearInterval(autoTimer); finish(); });
 }
 
+async function refreshPairUI() {
+  try {
+    const status = await window.herAPI.getPairStatus();
+    const unpaired = document.getElementById("pairUnpaired");
+    const paired = document.getElementById("pairPaired");
+    if (status.paired) {
+      unpaired.style.display = "none";
+      paired.style.display = "";
+      const statusText = document.getElementById("pairStatusText");
+      statusText.textContent = status.connected
+        ? `✓ 已连接 · ${status.deviceName}`
+        : `等待手机扫码连接…`;
+      statusText.style.color = status.connected ? "#4ade80" : "";
+      // Re-generate QR if no image shown yet
+      if (!paired.querySelector("img")) {
+        const qrContainer = document.getElementById("pairQrContainer");
+        qrContainer.innerHTML = `<div style="color:var(--text3);font-size:13px">已配对，重新生成请先断开</div>`;
+      }
+    } else {
+      unpaired.style.display = "";
+      paired.style.display = "none";
+    }
+  } catch (_) {}
+}
+
 function initSettingsPanel() {
   const settingsOverlay = document.getElementById("settingsOverlay");
 
@@ -141,10 +166,14 @@ function initSettingsPanel() {
     try {
       const s = await window.herAPI.getSettings();
       document.getElementById("settingsApiKey").value = s.apiKey || "";
-      document.getElementById("settingsBaseUrl").value = s.baseURL || "";
+      const baseUrlSelect = document.getElementById("settingsBaseUrl");
+      baseUrlSelect.value = s.baseURL || "https://www.packyapi.com";
+      // If stored URL doesn't match any option, default to proxy
+      if (!baseUrlSelect.value) baseUrlSelect.selectedIndex = 0;
       document.getElementById("settingsModel").value = s.model || "";
       document.getElementById("settingsMsg").textContent = "";
     } catch (_) {}
+    refreshPairUI();
     settingsOverlay.classList.add("open");
   });
 
@@ -178,6 +207,42 @@ function initSettingsPanel() {
     } catch (e) {
       msgEl.textContent = e.message || "保存失败";
       msgEl.style.color = "#f87171";
+    }
+    btn.disabled = false;
+  });
+
+  // ── Pairing ──
+
+  document.getElementById("pairGenerate").addEventListener("click", async () => {
+    const btn = document.getElementById("pairGenerate");
+    btn.disabled = true;
+    btn.textContent = "生成中...";
+    try {
+      const result = await window.herAPI.generatePair();
+      document.getElementById("pairUnpaired").style.display = "none";
+      document.getElementById("pairPaired").style.display = "";
+      const qrContainer = document.getElementById("pairQrContainer");
+      qrContainer.innerHTML = `<img src="${result.qrImage}" style="width:200px;height:200px;border-radius:8px;image-rendering:pixelated">`;
+      document.getElementById("pairStatusText").textContent = `用 Her Android 扫描此二维码`;
+    } catch (e) {
+      toast(`配对失败: ${e.message}`);
+    }
+    btn.disabled = false;
+    btn.textContent = "生成连接码";
+  });
+
+  document.getElementById("pairRevoke").addEventListener("click", async () => {
+    if (!confirm("断开后手机将无法连接，确定吗？")) return;
+    const btn = document.getElementById("pairRevoke");
+    btn.disabled = true;
+    try {
+      await window.herAPI.revokePair();
+      document.getElementById("pairPaired").style.display = "none";
+      document.getElementById("pairUnpaired").style.display = "";
+      document.getElementById("pairQrContainer").innerHTML = "";
+      toast("已断开手机连接");
+    } catch (e) {
+      toast(`断开失败: ${e.message}`);
     }
     btn.disabled = false;
   });

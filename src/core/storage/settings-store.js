@@ -10,7 +10,7 @@ class SettingsStore extends JsonFileStore {
   get() {
     const settings = this.read();
     return {
-      baseURL: "https://api.anthropic.com",
+      baseURL: "https://www.packyapi.com",
       model: DEFAULT_MODEL,
       relationshipProfile: null,
       relationshipSetupCompleted: false,
@@ -19,6 +19,8 @@ class SettingsStore extends JsonFileStore {
       remoteAgentEnabled: false,
       remoteRelayUrl: "",
       remoteDeviceToken: "",
+      remoteClientToken: "",
+      remotePairId: "",
       newsBriefing: null,
       ...settings,
     };
@@ -36,6 +38,8 @@ class SettingsStore extends JsonFileStore {
     if (patch.remoteAgentEnabled !== undefined) next.remoteAgentEnabled = Boolean(patch.remoteAgentEnabled);
     if (patch.remoteRelayUrl !== undefined) next.remoteRelayUrl = patch.remoteRelayUrl;
     if (patch.remoteDeviceToken !== undefined) next.remoteDeviceToken = patch.remoteDeviceToken;
+    if (patch.remoteClientToken !== undefined) next.remoteClientToken = patch.remoteClientToken;
+    if (patch.remotePairId !== undefined) next.remotePairId = patch.remotePairId;
     if (patch.newsBriefing !== undefined) next.newsBriefing = patch.newsBriefing;
     this.write(next);
     return next;

@@ -195,6 +195,7 @@ async function initializeApp() {
     getMainWindow: () => mainWindow,
     paths,
     stores,
+    getDeviceAgent: () => deviceAgent,
   });
 
   // News briefing cron

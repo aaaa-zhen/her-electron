@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { ipcMain, clipboard } = require("electron");
@@ -5,8 +6,10 @@ const { safePath, toFileUrl } = require("../core/tools/helpers");
 const { readCurrentBrowserContext } = require("../core/browser-companion-monitor");
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
 
+const QRCode = require("qrcode");
+const DEFAULT_RELAY_URL = "wss://43.134.52.155:3939";
 
-function registerIpc({ session, getMainWindow, paths, stores }) {
+function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) {
   let contextCache = { calendar: [], clipboard: "", frontApp: "", currentPage: null };
   let contextCacheUpdatedAt = 0;
   let contextRefreshPromise = null;
@@ -186,6 +189,111 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
       remoteAgentEnabled: Boolean(next.remoteAgentEnabled),
       remoteRelayUrl: next.remoteRelayUrl || "",
       remoteDeviceToken: next.remoteDeviceToken || "",
+    };
+  });
+
+  // ── Pairing: generate token pair, register with relay, return QR data ──
+
+  ipcMain.handle("her:generate-pair", async (_event, payload) => {
+    const relayBase = (payload && payload.relayUrl) || DEFAULT_RELAY_URL;
+    const httpBase = relayBase.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+    const agentToken = crypto.randomBytes(32).toString("hex");
+    const clientToken = crypto.randomBytes(32).toString("hex");
+
+    // Register with relay server
+    const { net } = require("electron");
+    const res = await net.fetch(`${httpBase}/api/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentToken, clientToken }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Relay registration failed: ${res.status} ${text}`);
+    }
+    const result = await res.json();
+
+    // Save to settings and auto-enable
+    const os = require("os");
+    stores.settingsStore.update({
+      remoteAgentEnabled: true,
+      remoteRelayUrl: `${relayBase}/ws/agent`,
+      remoteDeviceToken: agentToken,
+      remoteClientToken: clientToken,
+      remotePairId: result.pairId,
+    });
+
+    // Restart DeviceAgent with new config
+    const agent = getDeviceAgent && getDeviceAgent();
+    if (agent) {
+      agent.stop();
+      agent.start();
+    }
+
+    const deviceName = os.hostname();
+    const qrPayload = JSON.stringify({
+      relay: `${relayBase}/ws/client`,
+      token: clientToken,
+      name: deviceName,
+    });
+    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+      width: 240,
+      margin: 2,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+    return {
+      pairId: result.pairId,
+      qrData: qrPayload,
+      qrImage: qrDataUrl,
+      deviceName,
+      clientToken,
+    };
+  });
+
+  ipcMain.handle("her:revoke-pair", async () => {
+    const settings = stores.settingsStore.get();
+    const agentToken = settings.remoteDeviceToken;
+    if (!agentToken) return { ok: true };
+
+    const relayUrl = settings.remoteRelayUrl || "";
+    const relayBase = relayUrl.replace(/\/ws\/agent$/, "");
+    const httpBase = relayBase.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+
+    // Stop agent first
+    const agent = getDeviceAgent && getDeviceAgent();
+    if (agent) agent.stop();
+
+    // Revoke on server (best effort)
+    try {
+      const { net } = require("electron");
+      await net.fetch(`${httpBase}/api/pair`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentToken }),
+      });
+    } catch (_) {}
+
+    stores.settingsStore.update({
+      remoteAgentEnabled: false,
+      remoteRelayUrl: "",
+      remoteDeviceToken: "",
+      remoteClientToken: "",
+      remotePairId: "",
+    });
+
+    return { ok: true };
+  });
+
+  ipcMain.handle("her:get-pair-status", () => {
+    const settings = stores.settingsStore.get();
+    const agent = getDeviceAgent && getDeviceAgent();
+    return {
+      paired: Boolean(settings.remotePairId),
+      pairId: settings.remotePairId || "",
+      connected: agent ? agent.getStatus().connected : false,
+      deviceName: require("os").hostname(),
+      relayUrl: settings.remoteRelayUrl || "",
+      clientToken: settings.remoteClientToken || "",
     };
   });
 }

@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld("herAPI", {
   getBrowserDigest: () => ipcRenderer.invoke("her:get-browser-digest"),
   getRemoteConfig: () => ipcRenderer.invoke("her:get-remote-config"),
   saveRemoteConfig: (payload) => ipcRenderer.invoke("her:save-remote-config", payload),
+  generatePair: (payload) => ipcRenderer.invoke("her:generate-pair", payload),
+  revokePair: () => ipcRenderer.invoke("her:revoke-pair"),
+  getPairStatus: () => ipcRenderer.invoke("her:get-pair-status"),
   getNewsBriefing: () => ipcRenderer.invoke("her:get-news-briefing"),
   saveNewsBriefing: (payload) => ipcRenderer.invoke("her:save-news-briefing", payload),
   onEvent: (listener) => {

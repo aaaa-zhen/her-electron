@@ -950,6 +950,10 @@ header{
 }
 .settings-input::placeholder{color:var(--text3)}
 .settings-input:focus{border-color:rgba(110,231,183,.3)}
+select.settings-input{-webkit-appearance:none;appearance:none;cursor:pointer;
+  background:rgba(255,255,255,.03) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 12px center;
+}
+select.settings-input option{background:#1a1a2e;color:var(--text)}
 .settings-hint{font-size:11px;color:var(--text3)}
 .settings-save{
   padding:11px;border-radius:12px;border:none;cursor:pointer;
@@ -960,6 +964,9 @@ header{
 .settings-save:hover{opacity:.9}
 .settings-save:disabled{opacity:.5;cursor:wait}
 .settings-msg{font-size:13px;color:var(--accent);min-height:20px;text-align:center}
+.settings-divider{
+  margin:16px 0;border:none;border-top:1px solid var(--border);height:0;
+}
 .settings-footer{
   display:flex;align-items:center;justify-content:center;gap:6px;
   padding-top:12px;border-top:1px solid var(--border);

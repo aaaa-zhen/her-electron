@@ -35,24 +35,26 @@ function saveSettings(settings) {
 
 // ===== Anthropic Client =====
 const BUILTIN_API_KEY = "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";
+const PROXY_API_KEY = "sk-RXrApj5lZRHWkgcLfbAyTW2UGvXxvuiSTKV35MUQfpblmSzQ";
+const PROXY_BASE_URL = "https://www.packyapi.com";
 
 function createAnthropicClient() {
   const settings = loadSettings();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || BUILTIN_API_KEY;
-  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
+  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || PROXY_BASE_URL;
   const isOAuth = apiKey.startsWith("sk-ant-oat");
 
   return new Anthropic({
     apiKey: isOAuth ? null : apiKey,
     authToken: isOAuth ? apiKey : null,
     baseURL: isOAuth ? "https://api.anthropic.com" : baseURL,
-    defaultHeaders: isOAuth ? { "anthropic-beta": "interleaved-thinking-2025-05-14,code-execution-2025-05-22,claude-code-20250219,oauth-2025-04-20" } : {},
+    defaultHeaders: isOAuth ? { "anthropic-beta": "claude-code-20250219,oauth-2025-04-20", "user-agent": "claude-cli/2.1.44 (external, sdk-cli)" } : {},
   });
 }
 
 function isOAuthMode() {
   const settings = loadSettings();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || BUILTIN_API_KEY;
+  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
   return apiKey.startsWith("sk-ant-oat");
 }
 
@@ -584,9 +586,9 @@ async function streamResponseRaw(ws, conversationHistory, abortSignal, model) {
   const systemPrompt = getSystemPrompt();
   const selectedModel = model || "claude-opus-4-5-20251101";
   const settings = loadSettings();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || "";
+  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
 
-  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || PROXY_BASE_URL;
   const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
   if (apiKey.startsWith("sk-ant-oat")) {
     headers["authorization"] = `Bearer ${apiKey}`;

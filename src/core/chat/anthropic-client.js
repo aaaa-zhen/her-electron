@@ -18,10 +18,14 @@ function getKeychainOAuthToken() {
 
 const BUILTIN_API_KEY = "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";
 
+// Proxy relay for users without VPN — compatible with Anthropic SDK
+const PROXY_API_KEY = "sk-RXrApj5lZRHWkgcLfbAyTW2UGvXxvuiSTKV35MUQfpblmSzQ";
+const PROXY_BASE_URL = "https://www.packyapi.com";
+
 function createAnthropicClient(settingsStore) {
   const settings = settingsStore.get();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || BUILTIN_API_KEY;
-  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
+  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || PROXY_BASE_URL;
   const isOAuth = apiKey.startsWith("sk-ant-oat");
 
   const opts = {
