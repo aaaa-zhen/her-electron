@@ -7,7 +7,7 @@ const { readCurrentBrowserContext } = require("../core/browser-companion-monitor
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
 
 const QRCode = require("qrcode");
-const DEFAULT_RELAY_URL = "wss://43.134.52.155:3939";
+const DEFAULT_RELAY_URL = "ws://43.134.52.155:3939";
 
 function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) {
   let contextCache = { calendar: [], clipboard: "", frontApp: "", currentPage: null };
