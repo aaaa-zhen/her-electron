@@ -10,7 +10,7 @@ class SettingsStore extends JsonFileStore {
   get() {
     const settings = this.read();
     return {
-      baseURL: "https://www.packyapi.com",
+      baseURL: "https://api.anthropic.com",
       model: DEFAULT_MODEL,
       relationshipProfile: null,
       relationshipSetupCompleted: false,

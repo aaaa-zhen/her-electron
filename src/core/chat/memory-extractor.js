@@ -49,7 +49,7 @@ function isValidRoleCandidate(candidate) {
   return true;
 }
 
-function clipText(text, limit = 160) {
+function clipText(text, limit = 300) {
   const compact = normalizeText(text);
   if (!compact) return "";
   return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
@@ -74,7 +74,7 @@ function splitSentences(text) {
 function buildEntry({ key, value, type, tags, withinDays = 90 }) {
   return {
     key,
-    value: clipText(value, 220),
+    value: clipText(value, 500),
     type,
     tags,
     withinDays,
@@ -281,11 +281,11 @@ function extractToolActionMemories(toolActions) {
 function buildEpisodeMemory({ userText, assistantText, toolActions, imagesCount = 0, timestamp }) {
   const parts = [];
   if (imagesCount > 0) parts.push(`用户发了 ${imagesCount} 张图片`);
-  if (userText) parts.push(`用户：${clipText(userText, 140)}`);
+  if (userText) parts.push(`用户：${clipText(userText, 400)}`);
   if (toolActions && toolActions.length > 0) {
-    parts.push(`操作：${toolActions.slice(0, 5).join("、")}`);
+    parts.push(`操作：${toolActions.slice(0, 8).join("、")}`);
   }
-  if (assistantText) parts.push(`Her：${clipText(assistantText, 200)}`);
+  if (assistantText) parts.push(`Her：${clipText(assistantText, 500)}`);
   if (parts.length === 0) return null;
 
   return buildEntry({
@@ -308,6 +308,48 @@ function dedupeEntries(entries) {
     unique.push(entry);
   }
   return unique;
+}
+
+async function extractAIMemories({ userText, assistantText, createAnthropicClient }) {
+  if (!createAnthropicClient || (!userText && !assistantText)) return [];
+  const combined = `用户说：${clipText(userText, 800)}\nHer回复：${clipText(assistantText, 800)}`;
+  if (combined.length < 20) return [];
+
+  try {
+    const anthropic = createAnthropicClient();
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: `分析这段对话，提取需要长期记住的信息。只提取有价值的事实，忽略闲聊。
+
+${combined}
+
+以 JSON 数组返回，每条记忆格式：{"key": "简短标识", "value": "要记住的内容", "type": "identity|preference|project|relationship|other"}
+
+规则：
+- 用户提到的人名、地点、习惯、工作内容、正在做的事、情感状态、偏好、计划都值得记
+- 用户的隐含信息也要提取（比如深夜发消息说明可能是夜猫子）
+- 不要记录"用户说了hi"这种无意义内容
+- 每条 value 要完整有上下文，未来单独看也能理解
+- 最多 5 条，没有值得记的就返回空数组 []
+- 只返回 JSON，不要其他文字` }],
+    });
+
+    const text = response.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    const items = JSON.parse(match[0]);
+    return items.filter((item) => item.key && item.value).map((item) => buildEntry({
+      key: `ai:${slugify(item.key, 30)}`,
+      value: item.value,
+      type: item.type || "other",
+      tags: ["ai_extracted"],
+      withinDays: 365,
+    }));
+  } catch (err) {
+    console.error("[MemoryAI] extraction error:", err.message);
+    return [];
+  }
 }
 
 function extractTurnMemories({ userText, assistantText, toolActions, imagesCount = 0, timestamp = new Date().toISOString() }) {
@@ -337,4 +379,5 @@ function extractTurnMemories({ userText, assistantText, toolActions, imagesCount
 
 module.exports = {
   extractTurnMemories,
+  extractAIMemories,
 };

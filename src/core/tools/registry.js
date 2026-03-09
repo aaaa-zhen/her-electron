@@ -380,27 +380,15 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
       },
     },
     {
-      name: "search_web",
-      description: "Search the internet using DuckDuckGo.",
+      name: "recent_files",
+      description: "List recently modified files on this Mac. Shows what the user has been working on.",
       input_schema: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query" },
-          num_results: { type: "number", description: "Number of results (default: 5)" },
+          days: { type: "number", description: "How many days back to look (default: 1)" },
+          limit: { type: "number", description: "Max files to return (default: 20)" },
+          folder: { type: "string", description: "Specific folder to search in (default: home directory)" },
         },
-        required: ["query"],
-      },
-    },
-    {
-      name: "search_news",
-      description: "Search current news and return structured news cards with source, published time, summary, and image when available.",
-      input_schema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "News topic or query, e.g. 'today international news'" },
-          num_results: { type: "number", description: "Number of results (default: 5, max: 8)" },
-        },
-        required: ["query"],
       },
     },
     {
@@ -727,6 +715,32 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
     }));
 
     return cards;
+  }
+
+  const TOOL_TIMEOUTS = {
+    bash: 120000,
+    read_url: 20000,
+    read_url: 20000,
+    download_media: 60000,
+    convert_media: 60000,
+    schedule_task: 30000,
+  };
+  const DEFAULT_TOOL_TIMEOUT = 30000;
+
+  async function executeWithTimeout(block, activeProcesses) {
+    const timeout = TOOL_TIMEOUTS[block.name] || DEFAULT_TOOL_TIMEOUT;
+    const start = Date.now();
+    try {
+      const result = await Promise.race([
+        execute(block, activeProcesses),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool "${block.name}" timed out after ${timeout / 1000}s`)), timeout)),
+      ]);
+      console.log(`[Tool] ${block.name} done in ${Date.now() - start}ms`);
+      return result;
+    } catch (err) {
+      console.error(`[Tool] ${block.name} failed: ${err.message}`);
+      return { type: "tool_result", tool_use_id: block.id, content: `Error: ${err.message}`, is_error: true };
+    }
   }
 
   async function execute(block, activeProcesses) {
@@ -1133,51 +1147,19 @@ echo "Alarm set"`;
       return { type: "tool_result", tool_use_id: block.id, content: `ffmpeg output:\n${output.slice(0, 3000)}` };
     }
 
-    if (block.name === "search_web") {
-      const { query, num_results = 5 } = block.input;
-      const limit = Math.min(Number(num_results) || 5, 10);
-      emitCommand(`search_web: ${query}`, "搜索网页", query);
+    if (block.name === "recent_files") {
+      const days = Math.min(block.input.days || 1, 7);
+      const limit = Math.min(block.input.limit || 20, 50);
+      const folder = block.input.folder || process.env.HOME || "/Users";
+      emitCommand("recent_files", "查看最近文件", `${days}天内`);
       try {
-        const proxyUrl = `http://43.134.52.155:3941/search?q=${encodeURIComponent(query)}&n=${limit}`;
-        const raw = await execAsync(`curl -sL --max-time 20 "${proxyUrl}"`, { timeout: 25000 });
-        const data = JSON.parse(raw);
-        const results = data.results || [];
-        if (results.length === 0) {
-          return { type: "tool_result", tool_use_id: block.id, content: `No results for: "${query}"` };
-        }
-        return {
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: results.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet}`).join("\n\n"),
-        };
-      } catch (error) {
-        return { type: "tool_result", tool_use_id: block.id, content: `Web search failed: ${error.message}`, is_error: true };
-      }
-    }
-
-    if (block.name === "search_news") {
-      const { query, num_results = 5 } = block.input;
-      const limit = Math.min(Number(num_results) || 5, 10);
-      emitCommand(`search_news: ${query}`, "搜索新闻", query);
-      try {
-        const proxyUrl = `http://43.134.52.155:3941/news?q=${encodeURIComponent(query)}&n=${limit}`;
-        const raw = await execAsync(`curl -sL --max-time 20 "${proxyUrl}"`, { timeout: 25000 });
-        const data = JSON.parse(raw);
-        const cards = data.results || [];
-        emit({ type: "news_cards", query, cards });
-        if (cards.length === 0) {
-          return { type: "tool_result", tool_use_id: block.id, content: `No news found for: "${query}"` };
-        }
-        const briefList = cards.map((card, index) =>
-          `${index + 1}. ${card.title} (${card.source || "未知"}, ${card.publishedAt || ""})`
-        ).join("\n");
-        return {
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: `已向用户展示 ${cards.length} 条图文新闻卡片：\n${briefList}\n\n注意：卡片已经包含标题、摘要、来源、图片和链接，用户可以直接点击。你只需要用几句话简短总结今天的重点动态即可，不要重复列出每条新闻的标题和内容。`,
-        };
-      } catch (error) {
-        return { type: "tool_result", tool_use_id: block.id, content: `News search failed: ${error.message}`, is_error: true };
+        const cmd = `mdfind 'kMDItemFSContentChangeDate >= $time.today(-${days})' -onlyin "${folder}" 2>/dev/null | grep -v '/Library/' | grep -v '/\\.' | grep -v 'node_modules' | grep -v '__pycache__' | head -${limit}`;
+        const raw = await execAsync(cmd, { timeout: 10000 });
+        const files = raw.trim().split("\n").filter(Boolean);
+        if (files.length === 0) return { type: "tool_result", tool_use_id: block.id, content: "No recently modified files found." };
+        return { type: "tool_result", tool_use_id: block.id, content: `Recently modified files (last ${days} day${days > 1 ? "s" : ""}):\n${files.join("\n")}` };
+      } catch (err) {
+        return { type: "tool_result", tool_use_id: block.id, content: `Error: ${err.message}`, is_error: true };
       }
     }
 
@@ -1353,7 +1335,7 @@ echo "Alarm set"`;
     return { type: "tool_result", tool_use_id: block.id, content: "Unknown tool", is_error: true };
   }
 
-  return { tools, execute, processScheduleOutput };
+  return { tools, execute: executeWithTimeout, processScheduleOutput };
 }
 
 module.exports = { createTools };

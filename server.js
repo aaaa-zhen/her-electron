@@ -34,9 +34,11 @@ function saveSettings(settings) {
 }
 
 // ===== Anthropic Client =====
+const BUILTIN_API_KEY = "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";
+
 function createAnthropicClient() {
   const settings = loadSettings();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || "";
+  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || BUILTIN_API_KEY;
   const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
   const isOAuth = apiKey.startsWith("sk-ant-oat");
 
@@ -50,7 +52,7 @@ function createAnthropicClient() {
 
 function isOAuthMode() {
   const settings = loadSettings();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || "";
+  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || BUILTIN_API_KEY;
   return apiKey.startsWith("sk-ant-oat");
 }
 

@@ -1,9 +1,9 @@
 const EventEmitter = require("events");
-const { execSync } = require("child_process");
 const { net } = require("electron");
+const { createAnthropicClient } = require("./anthropic-client");
 const { DEFAULT_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN } = require("../shared/constants");
 const { compactConversation, estimateTotalTokens } = require("./compaction");
-const { extractTurnMemories } = require("./memory-extractor");
+const { extractTurnMemories, extractAIMemories } = require("./memory-extractor");
 const { extractProfileObservations } = require("./profile-extractor");
 const { inferTurn } = require("./turn-inference");
 const { getSystemPrompt } = require("./system-prompt");
@@ -21,8 +21,7 @@ const TOOL_LABELS = {
   memory: "整理记忆",
   download_media: "下载媒体",
   convert_media: "处理媒体",
-  search_web: "搜索网页",
-  search_news: "搜索新闻",
+  web_search: "搜索网页",
   read_url: "读取网页",
 };
 
@@ -125,7 +124,7 @@ function summarizeToolBlocks(toolBlocks) {
 }
 
 function isNewsTool(name) {
-  return name === "search_news" || name === "search_web" || name === "read_url";
+  return name === "web_search" || name === "read_url";
 }
 
 function clipText(text, limit = 72) {
@@ -539,7 +538,7 @@ class ChatSession extends EventEmitter {
       usage: this.sessionUsage,
       onboarding: {
         needsSetup: !settings.relationshipSetupCompleted,
-        needsApiKey: !settings.apiKey && !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN,
+        needsApiKey: false,
         profile: settings.relationshipProfile || null,
       },
     };
@@ -848,6 +847,25 @@ class ChatSession extends EventEmitter {
 
     this.stores.memoryStore.saveEntries(filtered);
 
+    // AI-powered deep memory extraction (async, non-blocking)
+    extractAIMemories({
+      userText,
+      assistantText,
+      createAnthropicClient: () => createAnthropicClient(this.stores.settingsStore),
+    }).then((aiEntries) => {
+      if (aiEntries.length === 0) return;
+      const aiFiltered = aiEntries.filter((entry) => !this.stores.memoryStore.hasSimilarEntry({
+        key: entry.key,
+        value: entry.value,
+        type: entry.type,
+        withinDays: entry.withinDays || 365,
+      }));
+      if (aiFiltered.length > 0) {
+        console.log(`[MemoryAI] Saved ${aiFiltered.length} deep memories`);
+        this.stores.memoryStore.saveEntries(aiFiltered);
+      }
+    }).catch((err) => console.error("[MemoryAI] Error:", err.message));
+
     // Progressive profile building
     try {
       const profileObs = extractProfileObservations({
@@ -949,9 +967,9 @@ class ChatSession extends EventEmitter {
         memoryStore: this.stores.memoryStore,
         todayCommitments,
       });
-      let relevantMemories = this.stores.memoryStore.getContextual(messageText, 6);
+      let relevantMemories = this.stores.memoryStore.getContextual(messageText, 12);
       try {
-        const semantic = await this.stores.memoryStore.getContextualSemantic(messageText, 6);
+        const semantic = await this.stores.memoryStore.getContextualSemantic(messageText, 12);
         if (semantic && semantic.length > 0) relevantMemories = semantic;
       } catch {}
 
@@ -1067,6 +1085,19 @@ class ChatSession extends EventEmitter {
           response = await this.streamResponse(this.currentAbort.signal, model);
           this.currentAbort = null;
           this.emitUsage(response);
+
+          // Force model to stop calling tools — up to 3 attempts
+          for (let forceRound = 0; forceRound < 3 && response && response.stop_reason === "tool_use"; forceRound++) {
+            this.conversationHistory.push({ role: "assistant", content: response.content });
+            const stubResults = response.content
+              .filter((b) => b.type === "tool_use")
+              .map((b) => ({ type: "tool_result", tool_use_id: b.id, content: "工具已禁用。不要再调用任何工具，直接用文字回答用户。", is_error: true }));
+            this.conversationHistory.push({ role: "user", content: stubResults });
+            this.currentAbort = new AbortController();
+            response = await this.streamResponse(this.currentAbort.signal, model);
+            this.currentAbort = null;
+            this.emitUsage(response);
+          }
           break;
         }
 
@@ -1078,7 +1109,12 @@ class ChatSession extends EventEmitter {
 
         const toolResults = this.cancelled
           ? []
-          : await Promise.all(toolBlocks.map((block) => this.tools.execute(block, this.activeProcesses)));
+          : await Promise.allSettled(toolBlocks.map((block) => this.tools.execute(block, this.activeProcesses)))
+              .then((settled) => settled.map((r, i) =>
+                r.status === "fulfilled"
+                  ? r.value
+                  : { type: "tool_result", tool_use_id: toolBlocks[i].id, content: `Error: ${r.reason?.message || "unknown"}`, is_error: true }
+              ));
 
         if (this.cancelled) {
           const lastMessage = this.conversationHistory[this.conversationHistory.length - 1];
@@ -1222,37 +1258,21 @@ class ChatSession extends EventEmitter {
       openTabs,
     });
     const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
-    let apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || "";
-    if (!apiKey) {
-      try {
-        const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null', { encoding: "utf8" }).trim();
-        const creds = JSON.parse(raw);
-        apiKey = creds.claudeAiOauth?.accessToken || "";
-      } catch {}
-    }
-    const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+    const anthropic = createAnthropicClient(this.stores.settingsStore);
 
-    const headers = {
-      "content-type": "application/json",
-      "anthropic-version": "2023-06-01",
-    };
-    if (apiKey.startsWith("sk-ant-oat")) {
-      headers.authorization = `Bearer ${apiKey}`;
-      headers["anthropic-beta"] = "claude-code-20250219,oauth-2025-04-20";
-      headers["user-agent"] = "claude-cli/2.1.44 (external, sdk-cli)";
-    } else {
-      headers["x-api-key"] = apiKey;
-    }
+    // Combine custom tools with Claude's built-in web search
+    const allTools = [
+      ...this.tools.tools,
+      { type: "web_search_20250305", name: "web_search", max_uses: 5 },
+    ];
 
     const payload = sanitizeForJson({
       model: selectedModel,
       max_tokens: 16384,
       system: systemPrompt,
-      tools: this.tools.tools,
+      tools: allTools,
       messages: this.conversationHistory,
-      stream: true,
     });
-    const body = JSON.stringify(payload);
 
     const controller = new AbortController();
     let aborted = false;
@@ -1263,24 +1283,8 @@ class ChatSession extends EventEmitter {
       }, { once: true });
     }
 
-    const effectiveBase = apiKey.startsWith("sk-ant-oat") ? "https://api.anthropic.com" : baseURL;
-    const cleanBase = effectiveBase.replace(/\/+$/, "");
-    const endpoint = cleanBase.endsWith("/v1") ? `${cleanBase}/messages` : `${cleanBase}/v1/messages`;
-    const fetchFn = apiKey.startsWith("sk-ant-oat") ? net.fetch : fetch;
-    const response = await fetchFn(endpoint, {
-      method: "POST",
-      headers,
-      body,
-      signal: controller.signal,
-    });
+    const stream = anthropic.messages.stream(payload, { signal: controller.signal });
 
-    if (!response.ok) {
-      throw new Error(`${response.status} ${await response.text()}`);
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     const contentBlocks = [];
     let currentText = "";
     let currentToolName = "";
@@ -1290,101 +1294,102 @@ class ChatSession extends EventEmitter {
     let stopReason = "end_turn";
     let usage = {};
 
-    while (true) {
+    // Buffered text emit — batch small deltas to reduce IPC overhead
+    let textBuffer = "";
+    let flushTimer = null;
+    const flushText = () => {
+      if (textBuffer && !aborted) {
+        this.emit("event", { type: "stream", text: textBuffer });
+        textBuffer = "";
+      }
+      flushTimer = null;
+    };
+
+    for await (const event of stream) {
       if (aborted) break;
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
 
-      while (buffer.includes("\n\n")) {
-        const separatorIndex = buffer.indexOf("\n\n");
-        const eventBlock = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
-
-        let eventType = "";
-        let eventData = "";
-        for (const line of eventBlock.split("\n")) {
-          if (line.startsWith("event: ")) eventType = line.slice(7);
-          else if (line.startsWith("data: ")) eventData = line.slice(6);
+      if (event.type === "content_block_start") {
+        const block = event.content_block;
+        if (block.type === "text") {
+          currentBlockType = "text";
+          currentText = block.text || "";
+        } else if (block.type === "tool_use") {
+          currentBlockType = "tool_use";
+          currentToolName = block.name;
+          currentToolId = block.id;
+          currentToolJson = "";
+        } else if (block.type === "server_tool_use") {
+          currentBlockType = "server_tool_use";
+          currentToolName = block.name;
+          currentToolId = block.id;
+          currentToolJson = "";
+        } else if (block.type === "web_search_tool_result") {
+          // Claude's built-in web search result — pass through as content block
+          currentBlockType = "web_search_result";
         }
-
-        if (eventType === "content_block_start") {
-          try {
-            const parsed = JSON.parse(eventData);
-            const block = parsed.content_block;
-            if (block.type === "text") {
-              currentText = "";
-              currentBlockType = "text";
-            } else if (block.type === "tool_use") {
-              currentToolId = block.id;
-              currentToolName = block.name;
-              currentToolJson = "";
-              currentBlockType = "tool_use";
-            } else if (block.type === "thinking") {
-              currentBlockType = "thinking";
-            }
-          } catch (error) {}
-          continue;
-        }
-
-        if (eventType === "content_block_delta") {
-          try {
-            const parsed = JSON.parse(eventData);
-            if (parsed.delta.type === "text_delta") {
-              currentText += parsed.delta.text;
-              if (!aborted) this.emit("event", { type: "stream", text: parsed.delta.text });
-            } else if (parsed.delta.type === "input_json_delta") {
-              currentToolJson += parsed.delta.partial_json;
-            }
-          } catch (error) {}
-          continue;
-        }
-
-        if (eventType === "content_block_stop") {
-          if (currentBlockType === "text" && currentText) {
-            contentBlocks.push({ type: "text", text: currentText });
-          } else if (currentBlockType === "tool_use") {
-            let input = {};
-            try {
-              input = JSON.parse(currentToolJson);
-            } catch (error) {}
-            contentBlocks.push({ type: "tool_use", id: currentToolId, name: currentToolName, input });
+      } else if (event.type === "content_block_delta") {
+        const delta = event.delta;
+        if (delta.type === "text_delta") {
+          currentText += delta.text;
+          textBuffer += delta.text;
+          // Flush immediately if buffer is large enough, otherwise batch with a short delay
+          if (textBuffer.length >= 12) {
+            if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+            flushText();
+          } else if (!flushTimer) {
+            flushTimer = setTimeout(flushText, 30);
           }
-          currentBlockType = null;
-          continue;
+        } else if (delta.type === "input_json_delta") {
+          currentToolJson += delta.partial_json;
         }
-
-        if (eventType === "message_delta") {
-          try {
-            const parsed = JSON.parse(eventData);
-            if (parsed.delta && parsed.delta.stop_reason) stopReason = parsed.delta.stop_reason;
-            if (parsed.usage) usage = { ...usage, ...parsed.usage };
-          } catch (error) {}
-          continue;
+      } else if (event.type === "content_block_stop") {
+        // Flush any remaining text
+        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+        flushText();
+        if (currentBlockType === "text") {
+          contentBlocks.push({ type: "text", text: currentText });
+          currentText = "";
+        } else if (currentBlockType === "tool_use") {
+          let input = {};
+          try { input = JSON.parse(currentToolJson); } catch {}
+          contentBlocks.push({ type: "tool_use", id: currentToolId, name: currentToolName, input });
+          currentToolName = "";
+          currentToolId = "";
+          currentToolJson = "";
+        } else if (currentBlockType === "server_tool_use") {
+          // Built-in web search — handled server-side, no local execution needed
+          let input = {};
+          try { input = JSON.parse(currentToolJson); } catch {}
+          contentBlocks.push({ type: "server_tool_use", id: currentToolId, name: currentToolName, input });
+          currentToolName = "";
+          currentToolId = "";
+          currentToolJson = "";
+        } else if (currentBlockType === "web_search_result") {
+          // Search results from Claude's built-in search — already processed server-side
+          contentBlocks.push(event.content_block || { type: "web_search_tool_result" });
         }
-
-        if (eventType === "message_start") {
-          try {
-            const parsed = JSON.parse(eventData);
-            if (parsed.message && parsed.message.usage) usage = parsed.message.usage;
-          } catch (error) {}
-          continue;
-        }
-
-        if (eventType === "message_stop") {
-          break;
-        }
-
-        if (eventType === "error") {
-          throw new Error(eventData || "Stream error");
-        }
+        currentBlockType = null;
+      } else if (event.type === "message_delta") {
+        if (event.delta && event.delta.stop_reason) stopReason = event.delta.stop_reason;
+        if (event.usage) usage = { ...usage, ...event.usage };
+      } else if (event.type === "message_start" && event.message) {
+        if (event.message.usage) usage = event.message.usage;
       }
     }
 
+    // Final flush
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    flushText();
+
     if (!aborted) this.emit("event", { type: "stream_end" });
 
+    // Filter out server-side tool blocks (web_search) — they break history if resent
+    const cleanedBlocks = contentBlocks.filter((b) =>
+      b.type !== "server_tool_use" && b.type !== "web_search_tool_result"
+    );
+
     return {
-      content: contentBlocks,
+      content: cleanedBlocks.length > 0 ? cleanedBlocks : [{ type: "text", text: "" }],
       stop_reason: stopReason,
       usage: {
         input_tokens: usage.input_tokens || 0,

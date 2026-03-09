@@ -16,9 +16,11 @@ function getKeychainOAuthToken() {
   }
 }
 
+const BUILTIN_API_KEY = "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";
+
 function createAnthropicClient(settingsStore) {
   const settings = settingsStore.get();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || getKeychainOAuthToken();
+  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || BUILTIN_API_KEY;
   const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
   const isOAuth = apiKey.startsWith("sk-ant-oat");
 

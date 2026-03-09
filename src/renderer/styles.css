@@ -834,15 +834,29 @@ header{
   width:6px;height:6px;border-radius:50%;
   background:rgba(255,255,255,.12);
   transition:all .5s cubic-bezier(.175,.885,.32,1.08);
+  cursor:pointer;
+}
+.onboarding-dot:hover{
+  background:rgba(255,255,255,.35);
+  transform:scale(1.4);
 }
 .onboarding-dot.active{
   background:var(--accent);
   box-shadow:0 0 8px rgba(110,231,183,.4);
 }
+@property --cta-angle {
+  syntax: "<angle>";
+  initial-value: 180deg;
+  inherits: false;
+}
+@keyframes cta-border-spin {
+  to { --cta-angle: 540deg; }
+}
 .onboarding-cta{
   position:absolute;bottom:48px;
   padding:2px;border-radius:999px;border:none;cursor:pointer;
-  background:conic-gradient(from 180deg, #f97316, #ef4444, #ec4899, #a855f6, #6366f1, #3b82f6, #06b6d4, #10b981, #f97316);
+  background:conic-gradient(from var(--cta-angle), #f97316, #ef4444, #ec4899, #a855f6, #6366f1, #3b82f6, #06b6d4, #10b981, #f97316);
+  animation: cta-border-spin 5s linear infinite;
   opacity:0;transform:translateY(12px);pointer-events:none;
   transition:transform .4s cubic-bezier(.175,.885,.32,1.06), opacity .6s ease;
 }
