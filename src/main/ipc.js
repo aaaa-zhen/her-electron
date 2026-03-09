@@ -58,7 +58,7 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
 
   ipcMain.handle("her:save-api-key", (_event, apiKey) => {
     if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) throw new Error("API Key is required");
-    stores.settingsStore.update({ apiKey: apiKey.trim() });
+    stores.settingsStore.update({ apiKey: apiKey.replace(/\s+/g, "") });
     return { ok: true };
   });
 
@@ -73,7 +73,7 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
 
   ipcMain.handle("her:save-settings", (_event, patch) => {
     const update = {};
-    if (patch.apiKey && !patch.apiKey.includes("...")) update.apiKey = patch.apiKey.trim();
+    if (patch.apiKey && !patch.apiKey.includes("...")) update.apiKey = patch.apiKey.replace(/\s+/g, "");
     if (patch.baseURL !== undefined) update.baseURL = patch.baseURL.trim();
     if (patch.model !== undefined) update.model = patch.model.trim();
     stores.settingsStore.update(update);
