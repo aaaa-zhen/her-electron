@@ -17,6 +17,7 @@ import com.example.pi.data.remote.WsMessage
 import com.example.pi.data.remote.dto.ImageData
 import com.example.pi.data.repository.ChatRepository
 import com.example.pi.data.repository.ChatUpdate
+import com.example.pi.data.repository.ReceivedFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +35,8 @@ data class UiMessage(
     val content: String,
     val toolName: String? = null,
     val isStreaming: Boolean = false,
-    val imageUris: List<Uri>? = null
+    val imageUris: List<Uri>? = null,
+    val receivedFiles: List<ReceivedFile>? = null
 ) {
     companion object {
         private val counter = AtomicLong(0)
@@ -54,6 +56,7 @@ class ChatViewModel @Inject constructor(
     val isStreaming = mutableStateOf(false)
     val streamingText = mutableStateOf("")
     private val streamingBuffer = StringBuilder()
+    private val pendingFiles = mutableListOf<ReceivedFile>()
     private var currentJob: Job? = null
     private var conversationId: String? = null
 
@@ -142,6 +145,8 @@ class ChatViewModel @Inject constructor(
         streamingBuffer.clear()
         streamingText.value = ""
 
+        pendingFiles.clear()
+
         currentJob = viewModelScope.launch {
             // Encode images on IO thread
             val encodedImages = imageUris?.let { uris ->
@@ -182,15 +187,24 @@ class ChatViewModel @Inject constructor(
                         conversationId = update.id
                         saveMessage("user", displayText)
                     }
+                    is ChatUpdate.FileReceived -> {
+                        pendingFiles.add(update.file)
+                    }
                     is ChatUpdate.StreamStart -> { }
                     is ChatUpdate.StreamEnd -> {
                         val finalText = streamingBuffer.toString()
-                        if (finalText.isNotBlank()) {
+                        val files = pendingFiles.toList()
+                        if (finalText.isNotBlank() || files.isNotEmpty()) {
                             messages.add(
-                                UiMessage(role = "assistant", content = finalText)
+                                UiMessage(
+                                    role = "assistant",
+                                    content = finalText,
+                                    receivedFiles = files.ifEmpty { null }
+                                )
                             )
                             saveMessage("assistant", finalText)
                         }
+                        pendingFiles.clear()
                         streamingBuffer.clear()
                         streamingText.value = ""
                         isStreaming.value = false

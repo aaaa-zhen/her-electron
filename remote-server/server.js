@@ -110,7 +110,7 @@ setInterval(cleanupRooms, CLEANUP_INTERVAL_MS);
 
 // ── HTTP API ─────────────────────────────────────────────────────────
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "20mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/health", (_req, res) => {

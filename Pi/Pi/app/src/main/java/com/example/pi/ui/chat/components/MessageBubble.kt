@@ -1,6 +1,8 @@
 package com.example.pi.ui.chat.components
 
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -37,6 +39,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -44,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
 import coil.compose.AsyncImage
 import com.example.pi.R
 import com.example.pi.ui.chat.UiMessage
@@ -119,6 +123,44 @@ private fun AiBubble(message: UiMessage, modifier: Modifier = Modifier, showAvat
     ) {
         if (showAvatar) {
             AiAvatarRow()
+        }
+
+        // Render received files (images from desktop Her)
+        if (!message.receivedFiles.isNullOrEmpty()) {
+            val imageFiles = message.receivedFiles.filter {
+                it.mimeType?.startsWith("image/") == true && it.data != null
+            }
+            if (imageFiles.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.padding(start = 32.dp, bottom = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    imageFiles.forEach { file ->
+                        val bitmap = remember(file.data) {
+                            try {
+                                val bytes = Base64.decode(file.data, Base64.DEFAULT)
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            } catch (_: Exception) { null }
+                        }
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = file.filename,
+                                modifier = Modifier
+                                    .widthIn(max = 260.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentScale = ContentScale.FillWidth
+                            )
+                            Text(
+                                text = file.filename,
+                                fontSize = 11.sp,
+                                color = TextTertiary,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // Check if content contains image references

@@ -75,6 +75,15 @@ class RemoteDispatch {
     return "";
   }
 
+  _normalizeImages(images) {
+    if (!Array.isArray(images) || images.length === 0) return [];
+    return images.map((img) => ({
+      mediaType: img.mediaType || img.mimeType || "image/jpeg",
+      base64: img.base64 || img.data || "",
+      filename: img.filename || "",
+    })).filter((img) => img.base64);
+  }
+
   async _handleChat(payload, onStream) {
     const passiveContext = await this.getPassiveContext().catch(() => ({
       frontApp: "",
@@ -85,13 +94,14 @@ class RemoteDispatch {
     const reply = await this._captureChatReply({
       message: payload.message || "",
       model: payload.model,
-      images: Array.isArray(payload.images) ? payload.images : [],
+      images: this._normalizeImages(payload.images),
       passiveContext,
     }, onStream);
 
     return {
       action: REMOTE_ACTIONS.CHAT_SEND,
       reply: reply.text,
+      files: reply.files && reply.files.length > 0 ? reply.files : undefined,
       usage: reply.usage,
       state: this.stores.stateStore ? this.stores.stateStore.getSnapshot().current : null,
       passiveContext: serializeContext({
@@ -102,9 +112,37 @@ class RemoteDispatch {
     };
   }
 
+  _fileToBase64(event) {
+    if (!event || !event.filename) return null;
+    try {
+      const filePath = event.url
+        ? decodeURIComponent(event.url.replace(/^file:\/\//, ""))
+        : path.join(this.paths.sharedDir, event.filename);
+      if (!fs.existsSync(filePath)) return null;
+      const stat = fs.statSync(filePath);
+      // Skip files larger than 10MB to avoid bloating the WebSocket message
+      if (stat.size > 10 * 1024 * 1024) return null;
+      const ext = path.extname(event.filename).toLowerCase();
+      const mimeMap = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml" };
+      const mimeType = mimeMap[ext] || "";
+      const data = fs.readFileSync(filePath).toString("base64");
+      return {
+        filename: event.filename,
+        fileType: event.fileType || "image",
+        size: event.size || "",
+        sizeBytes: event.sizeBytes || stat.size,
+        mimeType: mimeType || undefined,
+        data: mimeType ? data : undefined,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
   async _captureChatReply(payload, onStream) {
     return new Promise((resolve, reject) => {
       const chunks = [];
+      const files = [];
       let latestUsage = null;
       let finished = false;
       let inFinalStream = false;
@@ -139,6 +177,11 @@ class RemoteDispatch {
           }
           return;
         }
+        if (event.type === "file") {
+          const serialized = this._fileToBase64(event);
+          if (serialized) files.push(serialized);
+          return;
+        }
         if (event.type === "usage") {
           latestUsage = {
             input_tokens: event.input_tokens || 0,
@@ -165,6 +208,7 @@ class RemoteDispatch {
           cleanup();
           resolve({
             text: chunks.join(""),
+            files,
             usage: latestUsage,
           });
         })

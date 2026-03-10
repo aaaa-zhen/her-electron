@@ -7,7 +7,7 @@ const { extractTurnMemories, extractAIMemories } = require("./memory-extractor")
 const { extractProfileObservations } = require("./profile-extractor");
 const { inferTurn } = require("./turn-inference");
 const { getSystemPrompt } = require("./system-prompt");
-const { createTools } = require("../tools/registry");
+const { createTools } = require("../tools/index");
 
 // Split-out utilities
 const { clipText, toPlainText, hasRenderableAssistantText, sanitizeForJson, getMessageText, formatPhaseDetail, formatScheduleNote } = require("./text-utils");
