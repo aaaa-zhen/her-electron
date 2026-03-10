@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh:*)",
+      "Bash(brew list:*)",
+      "Bash(sshpass -p '3Lq9#/T[s_dz' ssh -o StrictHostKeyChecking=no root@43.134.52.155 'ls /root/pi-mono/server/src/agent/tools/')",
+      "Bash(sshpass -p '3Lq9#/T[s_dz' ssh -o StrictHostKeyChecking=no root@43.134.52.155 'cat /root/pi-mono/server/src/agent/tools/set-reminder.ts')",
+      "Bash(sshpass -p '3Lq9#/T[s_dz' ssh -o StrictHostKeyChecking=no root@43.134.52.155 'cat /root/pi-mono/server/src/types.ts')",
+      "Bash(sshpass -p '3Lq9#/T[s_dz' ssh -o StrictHostKeyChecking=no root@43.134.52.155 'cat /root/pi-mono/server/src/agent/agent-factory.ts')",
+      "Bash(sshpass -p '3Lq9#/T[s_dz' ssh -o StrictHostKeyChecking=no root@43.134.52.155 'cat /root/pi-mono/server/src/agent/system-prompt.ts')",
+      "Bash(sshpass -p:*)",
+      "Bash(curl:*)",
+      "Bash(find:*)"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">Her</string>
+    <string name="notification_channel_name_reminders">提醒</string>
+    <string name="notification_channel_desc_reminders">Her 助手提醒通知</string>
+    <string name="notification_channel_name_service">后台运行</string>
+    <string name="notification_channel_desc_service">保持 Her 助手后台连接</string>
+    <string name="notification_foreground_title">Her 运行中</string>
+    <string name="notification_foreground_text">随时为你待命</string>
+    <string name="notification_chat_title">Her</string>
+    <string name="notification_reminder_title">Her 提醒</string>
+    <string name="notification_reminder_fallback_text">提醒事项</string>
+</resources>
