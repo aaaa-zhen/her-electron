@@ -173,7 +173,12 @@
       <div class="settings-body">
         <div class="settings-group">
           <label class="settings-label">API Key</label>
-          <input class="settings-input" id="settingsApiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+          <div style="position:relative">
+            <input class="settings-input" id="settingsApiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" style="padding-right:40px">
+            <button type="button" id="toggleApiKey" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#666;font-size:16px;padding:4px" title="显示/隐藏">
+              <svg id="eyeIcon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+            </button>
+          </div>
           <div class="settings-hint">用于连接 AI 模型的密钥，留空则不修改</div>
         </div>
         <div class="settings-group">
