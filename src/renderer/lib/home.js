@@ -2,22 +2,29 @@
 
 const RELATIONSHIP_SETUP_OPTIONS = {
   tone: [
-    { value: "简洁直接", description: "抓重点，少一点客套" },
-    { value: "温柔一点", description: "更柔和，更像被接住" },
-    { value: "像朋友聊天", description: "自然、轻松、有人味" },
-    { value: "像搭子一起推进", description: "边聊边做，别太端着" },
+    { value: "简洁直接", description: "抓重点，少一点客套", icon: "#i-zap" },
+    { value: "温柔一点", description: "更柔和，更像被接住", icon: "#i-heart" },
+    { value: "像朋友聊天", description: "自然、轻松、有人味", icon: "#i-chat", popular: true },
+    { value: "像搭子一起推进", description: "边聊边做，别太端着", icon: "#i-sparkles" },
   ],
   relationshipMode: [
-    { value: "长期陪伴者", description: "更像一直在的人" },
-    { value: "朋友搭子", description: "熟一点，轻一点" },
-    { value: "做事助手", description: "以推进事务为主" },
+    { value: "长期陪伴者", description: "更像一直在的人", icon: "#i-heart", popular: true },
+    { value: "朋友搭子", description: "熟一点，轻一点", icon: "#i-chat" },
+    { value: "做事助手", description: "以推进事务为主", icon: "#i-zap" },
   ],
   proactivity: [
-    { value: "主动提醒我", description: "你可以更主动接续我" },
-    { value: "适度主动", description: "有判断地提醒，不要太频繁" },
-    { value: "尽量少打扰", description: "主要等我叫你" },
+    { value: "主动提醒我", description: "你可以更主动接续我", icon: "#i-bell" },
+    { value: "适度主动", description: "有判断地提醒，不要太频繁", icon: "#i-check", popular: true },
+    { value: "尽量少打扰", description: "主要等我叫你", icon: "#i-clock" },
   ],
 };
+
+const SETUP_STEPS = [
+  { group: "tone", title: "选择说话风格", subtitle: "我先用什么样的方式陪你，会让你更舒服？" },
+  { group: "relationshipMode", title: "选择关系模式", subtitle: "在你这边，我更像什么？" },
+  { group: "proactivity", title: "选择主动程度", subtitle: "我主动一点，会不会打扰你？" },
+  { group: "focus", title: "最近关注什么", subtitle: "告诉我最近你最想让我接住哪件事" },
+];
 
 const TRAIT_ZH = {
   "early riser": "早起型", "night owl": "夜猫子",
@@ -288,8 +295,12 @@ function fillHomeCalendar(calendar) {
 function buildSetupOptions(group, selectedValue) {
   return RELATIONSHIP_SETUP_OPTIONS[group].map((item) => `
     <button class="setup-option${item.value === selectedValue ? " selected" : ""}" type="button" data-setup-value="${encodeURIComponent(item.value)}">
-      <span class="setup-option-title">${esc(item.value)}</span>
-      <span class="setup-option-desc">${esc(item.description)}</span>
+      <span class="setup-option-icon"><svg width="20" height="20"><use href="${item.icon}"/></svg></span>
+      <span class="setup-option-text">
+        <span class="setup-option-title">${esc(item.value)}${item.popular ? '<span class="setup-popular">推荐</span>' : ""}</span>
+        <span class="setup-option-desc">${esc(item.description)}</span>
+      </span>
+      <span class="setup-option-check"><svg width="18" height="18"><use href="#i-check"/></svg></span>
     </button>
   `).join("");
 }

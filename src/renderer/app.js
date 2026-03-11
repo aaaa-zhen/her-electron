@@ -321,56 +321,78 @@ function renderRelationshipSetup(setup = currentRelationshipSetup || { needsSetu
   const profile = setup.profile || {};
   msgList.innerHTML = "";
 
+  let currentStep = 0;
+  const selections = {
+    tone: profile.tone || "像朋友聊天",
+    relationshipMode: profile.relationshipMode || "长期陪伴者",
+    proactivity: profile.proactivity || "适度主动",
+    currentFocus: profile.currentFocus || "",
+  };
+
   const welcome = document.createElement("div");
   welcome.className = "welcome presence-home relationship-setup";
   welcome.id = "welcome";
-  welcome.innerHTML = `
-    <div class="setup-card">
-      <div class="setup-block">
-        <div class="setup-label">我先用什么样的方式陪你，会让你更舒服？</div>
-        <div class="setup-options" data-setup-group="tone">
-          ${buildSetupOptions("tone", profile.tone || "像搭子一起推进")}
-        </div>
-      </div>
-      <div class="setup-block">
-        <div class="setup-label">在你这边，我更像什么？</div>
-        <div class="setup-options" data-setup-group="relationshipMode">
-          ${buildSetupOptions("relationshipMode", profile.relationshipMode || "长期陪伴者")}
-        </div>
-      </div>
-      <div class="setup-block">
-        <div class="setup-label">我主动一点，会不会打扰你？</div>
-        <div class="setup-options" data-setup-group="proactivity">
-          ${buildSetupOptions("proactivity", profile.proactivity || "适度主动")}
-        </div>
-      </div>
-      <div class="setup-block">
-        <div class="setup-label">最近你最想让我接住哪件事？</div>
-        <textarea class="setup-textarea" id="setupFocus" placeholder="随便说说，比如在做一个项目、准备面试、调整状态，或者只是想有人接住你。">${esc(profile.currentFocus || "")}</textarea>
-      </div>
-      <button class="setup-submit" id="setupSubmit" type="button">好，我记住了</button>
-    </div>
-  `;
 
-  welcome.querySelectorAll("[data-setup-group]").forEach((group) => {
-    group.querySelectorAll(".setup-option").forEach((button) => {
-      button.addEventListener("click", () => {
-        group.querySelectorAll(".setup-option").forEach((entry) => entry.classList.remove("selected"));
-        button.classList.add("selected");
+  function renderStep() {
+    const step = SETUP_STEPS[currentStep];
+    const isLast = currentStep === SETUP_STEPS.length - 1;
+    const isFirst = currentStep === 0;
+
+    let body = "";
+    if (step.group === "focus") {
+      body = `<textarea class="setup-textarea" id="setupFocus" placeholder="随便说说，比如在做一个项目、准备面试、调整状态，或者只是想有人接住你。">${esc(selections.currentFocus)}</textarea>`;
+    } else {
+      body = `<div class="setup-options" data-setup-group="${step.group}">${buildSetupOptions(step.group, selections[step.group])}</div>`;
+    }
+
+    welcome.innerHTML = `
+      <div class="setup-card">
+        <div class="setup-header">
+          <div class="setup-progress">
+            ${SETUP_STEPS.map((_, i) => `<div class="setup-dot${i === currentStep ? " active" : ""}${i < currentStep ? " done" : ""}"></div>`).join("")}
+          </div>
+          <h2 class="setup-title">${step.title}</h2>
+          <p class="setup-subtitle">${step.subtitle}</p>
+        </div>
+        ${body}
+        <div class="setup-nav">
+          ${!isFirst ? '<button class="setup-back" id="setupBack" type="button">上一步</button>' : '<div></div>'}
+          <button class="setup-submit" id="setupNext" type="button">${isLast ? "好，我记住了" : "继续"}</button>
+        </div>
+      </div>
+    `;
+
+    // Bind option clicks
+    welcome.querySelectorAll("[data-setup-group]").forEach((group) => {
+      group.querySelectorAll(".setup-option").forEach((button) => {
+        button.addEventListener("click", () => {
+          group.querySelectorAll(".setup-option").forEach((e) => e.classList.remove("selected"));
+          button.classList.add("selected");
+          selections[step.group] = decodeURIComponent(button.dataset.setupValue);
+        });
       });
     });
-  });
 
-  welcome.querySelector("#setupSubmit").addEventListener("click", async () => {
-    const tone = decodeURIComponent(welcome.querySelector('[data-setup-group="tone"] .setup-option.selected').dataset.setupValue);
-    const relationshipMode = decodeURIComponent(welcome.querySelector('[data-setup-group="relationshipMode"] .setup-option.selected').dataset.setupValue);
-    const proactivity = decodeURIComponent(welcome.querySelector('[data-setup-group="proactivity"] .setup-option.selected').dataset.setupValue);
-    const currentFocus = welcome.querySelector("#setupFocus").value.trim();
-    const button = welcome.querySelector("#setupSubmit");
+    // Back button
+    const backBtn = welcome.querySelector("#setupBack");
+    if (backBtn) backBtn.addEventListener("click", () => { currentStep--; renderStep(); });
 
+    // Next / Submit
+    welcome.querySelector("#setupNext").addEventListener("click", () => {
+      if (step.group === "focus") {
+        selections.currentFocus = (welcome.querySelector("#setupFocus")?.value || "").trim();
+      }
+      if (!isLast) { currentStep++; renderStep(); return; }
+      submitSetup();
+    });
+  }
+
+  async function submitSetup() {
+    const button = welcome.querySelector("#setupNext");
     button.disabled = true;
     button.textContent = "记住中...";
     try {
+      const { tone, relationshipMode, proactivity, currentFocus } = selections;
       const result = await window.herAPI.saveRelationshipProfile({ tone, relationshipMode, proactivity, currentFocus });
       currentPresence = result.presence || currentPresence || getFallbackPresence();
       currentRelationshipSetup = result.onboarding || { needsSetup: false, profile: result.profile || null };
@@ -403,8 +425,9 @@ function renderRelationshipSetup(setup = currentRelationshipSetup || { needsSetu
       button.textContent = "好，我记住了";
       toast(`保存失败: ${error.message}`);
     }
-  });
+  }
 
+  renderStep();
   msgList.appendChild(welcome);
   scrollDown();
 }

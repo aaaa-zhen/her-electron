@@ -259,7 +259,7 @@ class ChatSession extends EventEmitter {
     }
     suggestions.push(
       { label: "整理桌面", prompt: "帮我整理一下桌面，把文件归类到合适的目录", description: "自动归类桌面上的文件" },
-      { label: "帮我做点事", prompt: "帮我在电脑上推进一件具体的事", description: "直接进入执行模式" },
+      { label: "处理图片", prompt: "帮我处理一张图片", description: "去背景、裁剪、缩放、模糊等" },
       { label: "聊聊现在", prompt: "先不做任务，陪我聊聊我现在的状态", description: "偏陪伴和关系感的开场" }
     );
 
@@ -811,9 +811,11 @@ class ChatSession extends EventEmitter {
     const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
     const anthropic = createAnthropicClient(this.stores.settingsStore);
 
+    const supportsWebSearch = !settings.baseURL || settings.baseURL.includes("anthropic.com") || settings.baseURL.includes("aihubmix.com");
     const allTools = [
       ...this.tools.tools,
-      { type: "web_search_20250305", name: "web_search", max_uses: 5 },
+      // web_search is an Anthropic server-side tool — not supported by some proxies (e.g. Bedrock)
+      ...(supportsWebSearch ? [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }] : []),
     ];
 
     const payload = sanitizeForJson({

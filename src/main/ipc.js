@@ -5,6 +5,7 @@ const { ipcMain, clipboard } = require("electron");
 const { safePath, toFileUrl } = require("../core/tools/helpers");
 const { readCurrentBrowserContext } = require("../core/browser-companion-monitor");
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
+const { createAnthropicClient } = require("../core/chat/anthropic-client");
 
 const QRCode = require("qrcode");
 const DEFAULT_RELAY_URL = "ws://43.134.52.155:3939";
@@ -74,13 +75,28 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     };
   });
 
-  ipcMain.handle("her:save-settings", (_event, patch) => {
+  ipcMain.handle("her:save-settings", async (_event, patch) => {
     const update = {};
     if (patch.apiKey && !patch.apiKey.includes("...")) update.apiKey = patch.apiKey.replace(/\s+/g, "");
     if (patch.baseURL !== undefined) update.baseURL = patch.baseURL.trim();
     if (patch.model !== undefined) update.model = patch.model.trim();
     stores.settingsStore.update(update);
-    return { ok: true };
+
+    // Test API connectivity after saving
+    try {
+      const client = createAnthropicClient(stores.settingsStore);
+      const settings = stores.settingsStore.get();
+      const model = settings.model || "claude-sonnet-4-6";
+      const res = await client.messages.create({
+        model,
+        max_tokens: 10,
+        messages: [{ role: "user", content: "hi" }],
+      });
+      return { ok: true, connected: true };
+    } catch (err) {
+      const msg = err.message || String(err);
+      return { ok: true, connected: false, error: msg.slice(0, 200) };
+    }
   });
 
   ipcMain.handle("her:save-news-briefing", (_event, payload) => {

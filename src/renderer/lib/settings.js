@@ -213,10 +213,20 @@ function initSettingsPanel() {
       if (apiKeyVal && !apiKeyVal.includes("...")) {
         payload.apiKey = apiKeyVal;
       }
-      await window.herAPI.saveSettings(payload);
-      msgEl.textContent = "已保存";
-      msgEl.style.color = "";
-      setTimeout(() => { settingsOverlay.classList.remove("open"); }, 800);
+      const result = await window.herAPI.saveSettings(payload);
+      if (result.connected) {
+        msgEl.textContent = "已保存 · 连接成功 ✓";
+        msgEl.style.color = "#4ade80";
+      } else if (result.connected === false) {
+        msgEl.textContent = "已保存 · 连接失败：" + (result.error || "请检查 API Key");
+        msgEl.style.color = "#f87171";
+      } else {
+        msgEl.textContent = "已保存";
+        msgEl.style.color = "";
+      }
+      if (result.connected) {
+        setTimeout(() => { settingsOverlay.classList.remove("open"); }, 1500);
+      }
     } catch (e) {
       msgEl.textContent = e.message || "保存失败";
       msgEl.style.color = "#f87171";

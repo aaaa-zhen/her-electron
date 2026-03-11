@@ -24,6 +24,8 @@ function createMainWindow() {
   window.once("ready-to-show", () => window.show());
   window.loadFile(path.join(__dirname, "../renderer/index.html"));
 
+
+
   window.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };

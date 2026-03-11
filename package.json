@@ -1,6 +1,6 @@
 {
   "name": "her",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "Her — AI companion desktop app",
   "main": "main.js",
   "scripts": {
@@ -44,11 +44,18 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
+    "@imgly/background-removal-node": "^1.4.5",
+    "archiver": "^7.0.1",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
     "qrcode": "^1.5.4",
+    "sharp": "^0.34.5",
+    "tesseract.js": "^7.0.0",
+    "unzipper": "^0.12.3",
     "ws": "^8.19.0"
   },
   "devDependencies": {

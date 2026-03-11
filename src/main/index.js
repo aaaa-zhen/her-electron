@@ -27,6 +27,12 @@ const { readCurrentBrowserContext } = require("../core/browser-companion-monitor
 
 app.setName("Her");
 
+// Dev mode isolation: use separate userData so dev and production can run side by side
+if (process.env.HER_DEV === "1") {
+  const devPath = path.join(app.getPath("appData"), "Her-Dev");
+  app.setPath("userData", devPath);
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();

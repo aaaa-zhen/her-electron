@@ -62,7 +62,7 @@ window.copyCodeBlock = function copyCodeBlock(button) {
 
 function getActionIcon(label) {
   const map = {
-    "帮我做点事": "#i-zap",
+    "处理图片": "#i-image",
     "聊聊现在": "#i-heart", "帮我推进": "#i-zap", "设置提醒": "#i-clock",
     "回顾今天": "#i-check", "找回文件": "#i-folder", "整理桌面": "#i-folder",
     "做 PPT": "#i-presentation", "做表格": "#i-table", "下载视频": "#i-download",
@@ -72,7 +72,7 @@ function getActionIcon(label) {
 
 function getActionColor(label) {
   const map = {
-    "帮我做点事": "wc-orange",
+    "处理图片": "wc-purple",
     "聊聊现在": "wc-red", "帮我推进": "wc-cyan", "设置提醒": "wc-orange",
     "回顾今天": "wc-green", "找回文件": "wc-blue", "整理桌面": "wc-cyan",
     "做 PPT": "wc-orange", "做表格": "wc-green", "下载视频": "wc-purple",
