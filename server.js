@@ -588,11 +588,13 @@ async function streamResponseRaw(ws, conversationHistory, abortSignal, model) {
   const settings = loadSettings();
   const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
 
-  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || PROXY_BASE_URL;
+  const isOAuth = apiKey.startsWith("sk-ant-oat");
+  const baseURL = isOAuth ? "https://api.anthropic.com" : (settings.baseURL || process.env.ANTHROPIC_BASE_URL || PROXY_BASE_URL);
   const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
-  if (apiKey.startsWith("sk-ant-oat")) {
+  if (isOAuth) {
     headers["authorization"] = `Bearer ${apiKey}`;
     headers["anthropic-beta"] = "claude-code-20250219,oauth-2025-04-20";
+    headers["user-agent"] = "claude-cli/2.1.44 (external, sdk-cli)";
   } else {
     headers["x-api-key"] = apiKey;
   }
