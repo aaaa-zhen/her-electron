@@ -582,9 +582,21 @@ for (const s of savedSchedules) {
 if (savedSchedules.length > 0) console.log(`[Schedule] Restored ${savedSchedules.length} tasks`);
 
 // ===== Streaming (raw fetch for OAuth, SDK for API key) =====
+// Fix common model name typos (e.g. "Claude Sonnet 4.6" → "claude-sonnet-4-6")
+function normalizeModelName(m) {
+  if (!m) return null;
+  const s = m.toLowerCase().replace(/[^a-z0-9.-]/g, " ").trim();
+  if (/opus.*4[\.\s-]*6/.test(s)) return "claude-opus-4-6";
+  if (/opus.*4/.test(s)) return "claude-opus-4-20250514";
+  if (/sonnet.*4[\.\s-]*6/.test(s)) return "claude-sonnet-4-6";
+  if (/sonnet.*4/.test(s)) return "claude-sonnet-4-20250514";
+  if (/haiku/.test(s)) return "claude-haiku-4-5-20251001";
+  return m; // already a valid ID
+}
+
 async function streamResponseRaw(ws, conversationHistory, abortSignal, model) {
   const systemPrompt = getSystemPrompt();
-  const selectedModel = model || "claude-opus-4-5-20251101";
+  const selectedModel = normalizeModelName(model) || "claude-sonnet-4-6";
   const settings = loadSettings();
   const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
 

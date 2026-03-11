@@ -186,8 +186,15 @@
         </div>
         <div class="settings-group">
           <label class="settings-label">模型</label>
-          <input class="settings-input" id="settingsModel" type="text" placeholder="claude-sonnet-4-6" autocomplete="off" spellcheck="false">
-          <div class="settings-hint">默认 Claude Sonnet 4.6</div>
+          <select class="settings-input" id="settingsModel">
+            <option value="">默认 (Claude Sonnet 4.6)</option>
+            <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+            <option value="claude-opus-4-6">Claude Opus 4.6</option>
+            <option value="claude-opus-4-20250514">Claude Opus 4</option>
+          </select>
+          <div class="settings-hint">留空使用默认模型</div>
         </div>
         <button class="settings-save" id="settingsSave">保存</button>
         <div class="settings-msg" id="settingsMsg"></div>
