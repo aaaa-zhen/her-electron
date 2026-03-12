@@ -1,6 +1,6 @@
 {
   "name": "her",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Her — AI companion desktop app",
   "main": "main.js",
   "scripts": {
@@ -46,6 +46,7 @@
     "@anthropic-ai/sdk": "^0.78.0",
     "@imgly/background-removal-node": "^1.4.5",
     "archiver": "^7.0.1",
+    "color-name": "^2.1.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "multer": "^2.0.2",
