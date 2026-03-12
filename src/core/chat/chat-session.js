@@ -48,6 +48,24 @@ class ChatSession extends EventEmitter {
     this._repairToolResults();
     this.stores.conversationStore.save(this.conversationHistory);
     this.syncScheduleMemory();
+    this._frozenMemory = this._buildMemorySnapshot();
+  }
+
+  _buildMemorySnapshot() {
+    const memoryStore = this.stores.memoryStore;
+    const profileStore = this.stores.profileStore;
+    return {
+      recentTasks: memoryStore.getTaskHistory(8),
+      recentArtifacts: memoryStore.getArtifacts(6),
+      identitySnapshot: memoryStore.getIdentitySnapshot(3),
+      preferredNameInfo: memoryStore.getPreferredNameInfo ? memoryStore.getPreferredNameInfo() : null,
+      profileSummary: profileStore ? profileStore.getPromptSummary(0.25) : "",
+      understandingScore: profileStore ? profileStore.getUnderstandingScore() : 0,
+    };
+  }
+
+  refreshFrozenMemory() {
+    this._frozenMemory = this._buildMemorySnapshot();
   }
 
   destroy() {
@@ -524,6 +542,7 @@ class ChatSession extends EventEmitter {
         this.conversationHistory = [];
         this.sessionUsage = { input_tokens: 0, output_tokens: 0, total_cost: 0 };
         this.currentTurnContext = null;
+        this._frozenMemory = this._buildMemorySnapshot();
         this.stores.conversationStore.clear();
         this.emitPresence();
         this.emit("event", { type: "phase", clear: true });
@@ -542,11 +561,14 @@ class ChatSession extends EventEmitter {
         8
       );
       syncTimelineEvents({ memoryStore: this.stores.memoryStore, todayCommitments });
-      let relevantMemories = this.stores.memoryStore.getContextual(messageText, 12);
-      try {
-        const semantic = await this.stores.memoryStore.getContextualSemantic(messageText, 12);
-        if (semantic && semantic.length > 0) relevantMemories = semantic;
-      } catch {}
+      const relevantMemories = this.stores.memoryStore.getContextual(messageText, 12);
+      // Semantic search runs in background (non-blocking); keyword results are used immediately
+      // to eliminate the 1-3 second embedding API delay before streaming starts
+
+      // Retrieve relevant skills (local filesystem, fast)
+      const relevantSkills = this.stores.skillStore
+        ? this.stores.skillStore.getRelevant(messageText, 3)
+        : [];
 
       const turnInference = inferTurn({
         userText: messageText,
@@ -560,6 +582,7 @@ class ChatSession extends EventEmitter {
       this.currentTurnContext = {
         mode,
         relevantMemories,
+        relevantSkills,
         recentStateCue,
         currentBrowserContext,
         turnInference,
@@ -782,8 +805,9 @@ class ChatSession extends EventEmitter {
 
   async streamResponseRaw(abortSignal, requestedModel) {
     const settings = this.stores.settingsStore.get();
-    const profileSummary = this.stores.profileStore ? this.stores.profileStore.getPromptSummary(0.25) : "";
-    const understandingScore = this.stores.profileStore ? this.stores.profileStore.getUnderstandingScore() : 0;
+    const frozen = this._frozenMemory || this._buildMemorySnapshot();
+    const profileSummary = frozen.profileSummary;
+    const understandingScore = frozen.understandingScore;
     const activeTodos = this.stores.todoStore ? sortTodosForPrompt(this.stores.todoStore.list()).slice(0, 6) : [];
     const environmentSnapshot = this.environmentMonitor ? this.environmentMonitor.getSnapshot() : null;
     const awarenessContext = this.awarenessService ? this.awarenessService.getContext() : "";
@@ -807,8 +831,11 @@ class ChatSession extends EventEmitter {
       currentStateSummary: stateSummary,
       awarenessContext,
       openTabs,
+      frozenMemory: frozen,
+      relevantSkills: this.currentTurnContext ? this.currentTurnContext.relevantSkills || [] : [],
     });
     const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
+    if (this.tools.setModel) this.tools.setModel(selectedModel);
     const anthropic = createAnthropicClient(this.stores.settingsStore);
 
     const supportsWebSearch = !settings.baseURL || settings.baseURL.includes("anthropic.com") || settings.baseURL.includes("aihubmix.com");

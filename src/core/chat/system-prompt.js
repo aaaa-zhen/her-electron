@@ -142,6 +142,13 @@ function formatTurnInference(inference) {
   return lines.join("\n");
 }
 
+function truncateSection(text, maxChars) {
+  if (!text || text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars);
+  const lastNewline = cut.lastIndexOf("\n");
+  return (lastNewline > maxChars * 0.5 ? cut.slice(0, lastNewline) : cut) + "\n...";
+}
+
 function getSystemPrompt({
   memoryStore,
   sharedDir,
@@ -160,6 +167,8 @@ function getSystemPrompt({
   openTabs = [],
   currentTurnInference = null,
   currentStateSummary = "",
+  frozenMemory = null,
+  relevantSkills = [],
 }) {
   const homeDir = os.homedir();
   const platform = process.platform === "darwin"
@@ -315,14 +324,21 @@ This is your best current read of the user's immediate state. Let it shape your 
 ${currentStateSummary}`;
   }
 
-  const recentTasks = memoryStore.getTaskHistory(8);
+  const recentTasks = (frozenMemory && frozenMemory.recentTasks) || memoryStore.getTaskHistory(8);
   if (recentTasks.length > 0) {
-    prompt += `\n\n## Recently Completed Tasks\nThese are things you already did for the user and should be able to recall.\n${formatMemoryLines(recentTasks)}`;
+    prompt += `\n\n## Recently Completed Tasks\nThese are things you already did for the user and should be able to recall.\n${truncateSection(formatMemoryLines(recentTasks), 1500)}`;
   }
 
-  const recentArtifacts = memoryStore.getArtifacts(6);
+  const recentArtifacts = (frozenMemory && frozenMemory.recentArtifacts) || memoryStore.getArtifacts(6);
   if (recentArtifacts.length > 0) {
-    prompt += `\n\n## Recent Digital Artifacts\nThese files/images/videos exist in the user's world and can be referenced or re-sent.\n${formatMemoryLines(recentArtifacts)}`;
+    prompt += `\n\n## Recent Digital Artifacts\nThese files/images/videos exist in the user's world and can be referenced or re-sent.\n${truncateSection(formatMemoryLines(recentArtifacts), 1000)}`;
+  }
+
+  if (relevantSkills.length > 0) {
+    const skillBlocks = relevantSkills
+      .map((s) => `### ${s.title}\n${s.content}`)
+      .join("\n\n");
+    prompt += `\n\n## RELEVANT SKILLS\nThese are proven procedures from past experience. Follow them when they match the current task.\n${truncateSection(skillBlocks, 2000)}`;
   }
 
   if (activeSchedules.length > 0) {

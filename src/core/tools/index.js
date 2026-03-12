@@ -298,10 +298,11 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
   // ── Build context object shared with all tools ──
 
   function buildCtx(activeProcesses) {
-    return {
+    const ctx = {
       paths,
       stores,
       scheduleService,
+      createAnthropicClient,
       emit,
       execAsync,
       emitCommand,
@@ -314,7 +315,36 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
       parseDuckDuckGoResults,
       parseBingSearchResults,
       activeProcesses,
+      _delegationDepth: 0,
+      _allTools: null, // set after tools are built
+      _model: null,    // set by chat-session before execute
     };
+
+    // Allow delegate_task to execute child tool calls
+    ctx._executeChildTool = async (block) => {
+      const instance = toolMap.get(block.name);
+      if (!instance) {
+        return { type: "tool_result", tool_use_id: block.id, content: `Unknown tool: ${block.name}`, is_error: true };
+      }
+      const childCtx = { ...ctx, activeProcesses, _delegationDepth: ctx._delegationDepth + 1 };
+      try {
+        const result = await Promise.race([
+          instance.execute(block.input || {}, childCtx),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out")), instance.timeout)),
+        ]);
+        if (typeof result === "string") {
+          return { type: "tool_result", tool_use_id: block.id, content: result };
+        }
+        if (result && result.content) {
+          return { type: "tool_result", tool_use_id: block.id, content: typeof result.content === "string" ? result.content : JSON.stringify(result.content), is_error: result.is_error || false };
+        }
+        return { type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) };
+      } catch (err) {
+        return { type: "tool_result", tool_use_id: block.id, content: `Error: ${err.message}`, is_error: true };
+      }
+    };
+
+    return ctx;
   }
 
   // ── Build Anthropic tool definitions ──
@@ -325,6 +355,8 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
       ? instance.definition(ctx)
       : instance.definition();
   });
+  // Make tool definitions available for delegate_task subagents
+  ctx._allTools = tools;
 
   // ── Execute with timeout + validation ──
 
@@ -343,6 +375,8 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
     const timeout = instance.timeout;
     const start = Date.now();
     const toolCtx = buildCtx(activeProcesses);
+    toolCtx._allTools = tools;
+    toolCtx._model = executeWithTimeout._currentModel || null;
 
     try {
       const result = await Promise.race([
@@ -371,7 +405,11 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
     }
   }
 
-  return { tools, execute: executeWithTimeout, processScheduleOutput };
+  function setModel(model) {
+    executeWithTimeout._currentModel = model || null;
+  }
+
+  return { tools, execute: executeWithTimeout, processScheduleOutput, setModel };
 }
 
 module.exports = { createTools };
