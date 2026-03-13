@@ -24,7 +24,9 @@
     "protocols": [
       {
         "name": "Her URL",
-        "schemes": ["her"]
+        "schemes": [
+          "her"
+        ]
       }
     ],
     "mac": {
@@ -50,7 +52,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
-    "@imgly/background-removal-node": "^1.4.5",
     "archiver": "^7.0.1",
     "color-name": "^2.1.0",
     "dotenv": "^17.3.1",

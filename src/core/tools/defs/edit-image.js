@@ -9,7 +9,7 @@ class EditImageTool extends BaseTool {
   get description() {
     return [
       "Edit or process an image file. Supported operations:",
-      "- remove_bg: Remove background (output PNG with transparency)",
+      "- remove_bg: Remove background (requires imagemagick, uses rembg via Python)",
       "- resize: Resize image (specify width and/or height)",
       "- crop: Crop image (specify left, top, width, height in crop_options)",
       "- rotate: Rotate image (specify angle in degrees)",
@@ -116,18 +116,15 @@ class EditImageTool extends BaseTool {
   }
 
   async _removeBg(inputPath, outputPath, outputFile, inputFile, ctx) {
-    const { removeBackground } = await import("@imgly/background-removal-node");
-
+    // Use Python rembg as a lightweight alternative (pip install rembg)
     ctx.emitCommand("edit_image", "去除背景", `${inputFile} -> ${outputFile}`);
-
-    const blob = await removeBackground(inputPath, {
-      output: { format: "image/png" },
-    });
-
-    const buffer = Buffer.from(await blob.arrayBuffer());
-    fs.writeFileSync(outputPath, buffer);
-
-    return this._emitResult(outputFile, outputPath, inputFile, "remove_bg", ctx);
+    try {
+      await ctx.execAsync(`python3 -c "from rembg import remove; from PIL import Image; Image.open('${inputPath}').pipe(remove).save('${outputPath}')" 2>/dev/null || rembg i "${inputPath}" "${outputPath}"`, { timeout: 60000, cwd: path.dirname(outputPath) });
+      if (!fs.existsSync(outputPath)) throw new Error("Output not created");
+      return this._emitResult(outputFile, outputPath, inputFile, "remove_bg", ctx);
+    } catch (err) {
+      return { content: `Background removal failed. Please install rembg first: pip install rembg\nError: ${err.message}`, is_error: true };
+    }
   }
 
   _emitResult(outputFile, outputPath, inputFile, operation, ctx) {
