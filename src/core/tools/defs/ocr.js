@@ -31,11 +31,17 @@ class OcrTool extends BaseTool {
 
     ctx.emitCommand("ocr", "文字识别", input.input);
 
-    const { data } = await Tesseract.recognize(inputPath, lang, {
-      logger: () => {},
-    });
+    let data;
+    try {
+      const result = await Tesseract.recognize(inputPath, lang, {
+        logger: () => {},
+      });
+      data = result.data;
+    } catch (err) {
+      return { content: `OCR failed: ${err.message || err}`, is_error: true };
+    }
 
-    if (!data.text || !data.text.trim()) {
+    if (!data || !data.text || !data.text.trim()) {
       return "No text detected in the image.";
     }
 

@@ -28,6 +28,24 @@ const { readCurrentBrowserContext } = require("../core/browser-companion-monitor
 
 app.setName("Her");
 
+// Prevent crash dialogs from uncaught errors (e.g. tesseract.js worker fetch failures)
+process.on("uncaughtException", (err) => {
+  console.error("[her] uncaughtException:", err.message || err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[her] unhandledRejection:", reason);
+});
+
+// Register her:// URL scheme for Shortcuts / automation
+if (process.defaultApp) {
+  // Dev mode: register with path to electron
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("her", process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  app.setAsDefaultProtocolClient("her");
+}
+
 // Dev mode isolation: use separate userData so dev and production can run side by side
 if (process.env.HER_DEV === "1") {
   const devPath = path.join(app.getPath("appData"), "Her-Dev");
@@ -325,10 +343,77 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("second-instance", () => {
+app.on("second-instance", (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
+  }
+  // Check if launched with a her:// URL
+  const herUrl = argv.find((arg) => arg.startsWith("her://"));
+  if (herUrl) handleHerUrl(herUrl);
+});
+
+// ── her:// URL Scheme handler ─────────────────────────────────────────
+// Supported URLs:
+//   her://ask?text=...       → send message to Her
+//   her://remember?text=...  → ask Her to remember something
+//   her://today              → ask Her what's on today
+//   her://clear              → clear conversation
+//   her://show               → just show the window
+
+function handleHerUrl(url) {
+  if (!url || !chatSession) return;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "her:") return;
+
+    ensureWindow();
+    mainWindow.show();
+    mainWindow.focus();
+
+    const action = parsed.hostname || parsed.pathname.replace(/^\/+/, "");
+    const text = parsed.searchParams.get("text") || "";
+
+    switch (action) {
+      case "ask":
+      case "chat":
+        if (text) {
+          setTimeout(() => chatSession.sendMessage({ message: text, images: [] }), 300);
+        }
+        break;
+      case "remember":
+        if (text) {
+          setTimeout(() => chatSession.sendMessage({ message: `请记住这件事：${text}`, images: [] }), 300);
+        }
+        break;
+      case "today":
+        setTimeout(() => chatSession.sendMessage({ message: "今天有什么安排？帮我梳理一下", images: [] }), 300);
+        break;
+      case "clear":
+        setTimeout(() => chatSession.sendMessage({ message: "/clear", images: [] }), 300);
+        break;
+      case "show":
+        // just show the window, already done above
+        break;
+      default:
+        // Treat unknown action as a chat message if text is provided
+        if (text) {
+          setTimeout(() => chatSession.sendMessage({ message: text, images: [] }), 300);
+        }
+        break;
+    }
+  } catch (err) {
+    console.error("[Her] Failed to handle URL:", err.message);
+  }
+}
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (!initialized) {
+    // App not ready yet, queue it
+    app.whenReady().then(() => setTimeout(() => handleHerUrl(url), 500));
+  } else {
+    handleHerUrl(url);
   }
 });
 

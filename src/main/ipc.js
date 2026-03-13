@@ -6,6 +6,8 @@ const { safePath, toFileUrl } = require("../core/tools/helpers");
 const { readCurrentBrowserContext } = require("../core/browser-companion-monitor");
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
 const { createAnthropicClient } = require("../core/chat/anthropic-client");
+const { createDeepSeekClient } = require("../core/chat/deepseek-client");
+const { getProviderForModel } = require("../core/shared/constants");
 
 const QRCode = require("qrcode");
 const DEFAULT_RELAY_URL = "ws://43.134.52.155:3939";
@@ -84,14 +86,25 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
 
     // Test API connectivity after saving
     try {
-      const client = createAnthropicClient(stores.settingsStore);
       const settings = stores.settingsStore.get();
       const model = settings.model || "claude-sonnet-4-6";
-      const res = await client.messages.create({
-        model,
-        max_tokens: 10,
-        messages: [{ role: "user", content: "hi" }],
-      });
+      const provider = getProviderForModel(model);
+
+      if (provider === "deepseek") {
+        const dsClient = createDeepSeekClient(stores.settingsStore);
+        await dsClient.chatComplete({
+          model,
+          messages: [{ role: "user", content: "hi" }],
+          max_tokens: 10,
+        });
+      } else {
+        const client = createAnthropicClient(stores.settingsStore);
+        await client.messages.create({
+          model,
+          max_tokens: 10,
+          messages: [{ role: "user", content: "hi" }],
+        });
+      }
       return { ok: true, connected: true };
     } catch (err) {
       const msg = err.message || String(err);
@@ -311,6 +324,26 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
       relayUrl: settings.remoteRelayUrl || "",
       clientToken: settings.remoteClientToken || "",
     };
+  });
+
+  ipcMain.handle("her:get-iphone-qr", async () => {
+    const settings = stores.settingsStore.get();
+    if (!settings.remotePairId || !settings.remoteClientToken) {
+      throw new Error("请先生成连接码");
+    }
+    const relayWsUrl = settings.remoteRelayUrl || "";
+    // Convert ws://host:port/ws/agent → http://host:port
+    const relayBase = relayWsUrl
+      .replace(/\/ws\/agent$/, "")
+      .replace(/^wss:/, "https:")
+      .replace(/^ws:/, "http:");
+    const shortcutsUrl = `${relayBase}/shortcuts?token=${encodeURIComponent(settings.remoteClientToken)}`;
+    const qrDataUrl = await QRCode.toDataURL(shortcutsUrl, {
+      width: 240,
+      margin: 2,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+    return { qrImage: qrDataUrl, url: shortcutsUrl };
   });
 }
 

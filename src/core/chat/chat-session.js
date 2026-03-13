@@ -1,7 +1,8 @@
 const EventEmitter = require("events");
 const { net } = require("electron");
 const { createAnthropicClient } = require("./anthropic-client");
-const { DEFAULT_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN } = require("../shared/constants");
+const { createDeepSeekClient, convertMessagesForDeepSeek, convertToolsForDeepSeek } = require("./deepseek-client");
+const { DEFAULT_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, DEEPSEEK_INPUT_COST_PER_TOKEN, DEEPSEEK_OUTPUT_COST_PER_TOKEN, getProviderForModel } = require("../shared/constants");
 const { compactConversation, estimateTotalTokens } = require("./compaction");
 const { extractTurnMemories, extractAIMemories } = require("./memory-extractor");
 const { extractProfileObservations } = require("./profile-extractor");
@@ -524,9 +525,13 @@ class ChatSession extends EventEmitter {
     if (!response || !response.usage) return;
     this.sessionUsage.input_tokens += response.usage.input_tokens || 0;
     this.sessionUsage.output_tokens += response.usage.output_tokens || 0;
+
+    const provider = response._provider || "anthropic";
+    const inputCost = provider === "deepseek" ? DEEPSEEK_INPUT_COST_PER_TOKEN : INPUT_COST_PER_TOKEN;
+    const outputCost = provider === "deepseek" ? DEEPSEEK_OUTPUT_COST_PER_TOKEN : OUTPUT_COST_PER_TOKEN;
     this.sessionUsage.total_cost =
-      this.sessionUsage.input_tokens * INPUT_COST_PER_TOKEN +
-      this.sessionUsage.output_tokens * OUTPUT_COST_PER_TOKEN;
+      this.sessionUsage.input_tokens * inputCost +
+      this.sessionUsage.output_tokens * outputCost;
 
     this.emit("event", {
       type: "usage",
@@ -805,6 +810,11 @@ class ChatSession extends EventEmitter {
 
   async streamResponseRaw(abortSignal, requestedModel) {
     const settings = this.stores.settingsStore.get();
+    const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
+    const provider = getProviderForModel(selectedModel);
+    if (provider === "deepseek") {
+      return this._streamDeepSeek(abortSignal, selectedModel);
+    }
     const frozen = this._frozenMemory || this._buildMemorySnapshot();
     const profileSummary = frozen.profileSummary;
     const understandingScore = frozen.understandingScore;
@@ -834,7 +844,7 @@ class ChatSession extends EventEmitter {
       frozenMemory: frozen,
       relevantSkills: this.currentTurnContext ? this.currentTurnContext.relevantSkills || [] : [],
     });
-    const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
+    // selectedModel already declared at top of streamResponseRaw
     if (this.tools.setModel) this.tools.setModel(selectedModel);
     const anthropic = createAnthropicClient(this.stores.settingsStore);
 
@@ -962,6 +972,184 @@ class ChatSession extends EventEmitter {
     return {
       content: cleanedBlocks.length > 0 ? cleanedBlocks : [{ type: "text", text: "" }],
       stop_reason: stopReason,
+      usage: {
+        input_tokens: usage.input_tokens || 0,
+        output_tokens: usage.output_tokens || 0,
+      },
+    };
+  }
+
+  /**
+   * DeepSeek streaming — OpenAI-compatible SSE format.
+   * Returns the same response shape as Anthropic streaming for compatibility.
+   */
+  async _streamDeepSeek(abortSignal, selectedModel) {
+    const settings = this.stores.settingsStore.get();
+    const frozen = this._frozenMemory || this._buildMemorySnapshot();
+    const profileSummary = frozen.profileSummary;
+    const understandingScore = frozen.understandingScore;
+    const activeTodos = this.stores.todoStore ? sortTodosForPrompt(this.stores.todoStore.list()).slice(0, 6) : [];
+    const environmentSnapshot = this.environmentMonitor ? this.environmentMonitor.getSnapshot() : null;
+    const awarenessContext = this.awarenessService ? this.awarenessService.getContext() : "";
+    const openTabs = this.awarenessService ? this.awarenessService.getOpenTabs() : [];
+    const stateSummary = this.stores.stateStore ? this.stores.stateStore.getPromptSummary() : "";
+    const systemPrompt = getSystemPrompt({
+      memoryStore: this.stores.memoryStore,
+      sharedDir: this.paths.sharedDir,
+      relevantMemories: this.currentTurnContext ? this.currentTurnContext.relevantMemories : [],
+      activeSchedules: this.scheduleService.getActiveTasks(6),
+      activeTodos,
+      mode: this.currentTurnContext ? this.currentTurnContext.mode : "general",
+      relationshipProfile: settings.relationshipProfile || null,
+      recentStateCue: this.currentTurnContext ? this.currentTurnContext.recentStateCue : "",
+      profileSummary,
+      understandingScore,
+      environmentSnapshot,
+      currentBrowserContext: this.currentTurnContext ? this.currentTurnContext.currentBrowserContext : null,
+      todayCommitments: this.currentTurnContext ? this.currentTurnContext.todayCommitments : [],
+      currentTurnInference: this.currentTurnContext ? this.currentTurnContext.turnInference : null,
+      currentStateSummary: stateSummary,
+      awarenessContext,
+      openTabs,
+      frozenMemory: frozen,
+      relevantSkills: this.currentTurnContext ? this.currentTurnContext.relevantSkills || [] : [],
+    });
+
+    if (this.tools.setModel) this.tools.setModel(selectedModel);
+
+    const dsClient = createDeepSeekClient(this.stores.settingsStore);
+    const dsTools = convertToolsForDeepSeek(this.tools.tools);
+    const dsMessages = convertMessagesForDeepSeek(systemPrompt, this.conversationHistory);
+
+    const controller = new AbortController();
+    let aborted = false;
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", () => {
+        aborted = true;
+        controller.abort();
+      }, { once: true });
+    }
+
+    const stream = await dsClient.chatStream({
+      model: selectedModel,
+      messages: dsMessages,
+      max_tokens: 8192,
+      tools: dsTools.length > 0 ? dsTools : undefined,
+      signal: controller.signal,
+    });
+
+    // Parse SSE from ReadableStream
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let currentText = "";
+    let toolCalls = {};  // indexed by tool call index
+    let stopReason = "end_turn";
+    let usage = {};
+
+    let textBuffer = "";
+    let flushTimer = null;
+    const flushText = () => {
+      if (textBuffer && !aborted) {
+        this.emit("event", { type: "stream", text: textBuffer });
+        textBuffer = "";
+      }
+      flushTimer = null;
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || aborted) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+
+          let parsed;
+          try { parsed = JSON.parse(data); } catch { continue; }
+
+          // Handle usage (may come in a separate chunk with stream_options)
+          if (parsed.usage) {
+            usage = {
+              input_tokens: parsed.usage.prompt_tokens || 0,
+              output_tokens: parsed.usage.completion_tokens || 0,
+            };
+          }
+
+          const choice = parsed.choices && parsed.choices[0];
+          if (!choice) continue;
+
+          if (choice.finish_reason) {
+            stopReason = choice.finish_reason === "tool_calls" ? "tool_use" : "end_turn";
+          }
+
+          const delta = choice.delta;
+          if (!delta) continue;
+
+          // Text content
+          if (delta.content) {
+            currentText += delta.content;
+            textBuffer += delta.content;
+            if (textBuffer.length >= 12) {
+              if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+              flushText();
+            } else if (!flushTimer) {
+              flushTimer = setTimeout(flushText, 30);
+            }
+          }
+
+          // Tool calls
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index;
+              if (!toolCalls[idx]) {
+                toolCalls[idx] = { id: tc.id || "", name: "", arguments: "" };
+              }
+              if (tc.id) toolCalls[idx].id = tc.id;
+              if (tc.function) {
+                if (tc.function.name) toolCalls[idx].name = tc.function.name;
+                if (tc.function.arguments) toolCalls[idx].arguments += tc.function.arguments;
+              }
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    flushText();
+    if (!aborted) this.emit("event", { type: "stream_end" });
+
+    // Build Anthropic-compatible content blocks
+    const contentBlocks = [];
+    if (currentText) {
+      contentBlocks.push({ type: "text", text: currentText });
+    }
+    for (const idx of Object.keys(toolCalls).sort((a, b) => a - b)) {
+      const tc = toolCalls[idx];
+      let input = {};
+      try { input = JSON.parse(tc.arguments); } catch {}
+      contentBlocks.push({
+        type: "tool_use",
+        id: tc.id,
+        name: tc.name,
+        input,
+      });
+    }
+
+    return {
+      content: contentBlocks.length > 0 ? contentBlocks : [{ type: "text", text: "" }],
+      stop_reason: stopReason,
+      _provider: "deepseek",
       usage: {
         input_tokens: usage.input_tokens || 0,
         output_tokens: usage.output_tokens || 0,

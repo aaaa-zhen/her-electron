@@ -185,22 +185,37 @@
           <div class="settings-hint">用于连接 AI 模型的密钥，留空则不修改</div>
         </div>
         <div class="settings-group">
+          <label class="settings-label">AI 服务商</label>
+          <select class="settings-input" id="settingsProvider">
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="deepseek">DeepSeek</option>
+          </select>
+          <div class="settings-hint">选择 AI 模型供应商</div>
+        </div>
+        <div class="settings-group" id="baseUrlGroup">
           <label class="settings-label">API 线路</label>
           <select class="settings-input" id="settingsBaseUrl">
             <option value="https://www.packyapi.com">中转站 · PackyAPI（免翻墙）</option>
             <option value="https://api.anthropic.com">官方 API（需翻墙）</option>
+            <option value="https://api.deepseek.com">DeepSeek 官方</option>
           </select>
-          <div class="settings-hint">中转站无需翻墙，官方线路需自备梯子</div>
+          <div class="settings-hint" id="baseUrlHint">中转站无需翻墙，官方线路需自备梯子</div>
         </div>
         <div class="settings-group">
           <label class="settings-label">模型</label>
           <select class="settings-input" id="settingsModel">
-            <option value="">默认 (Claude Sonnet 4.6)</option>
-            <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-            <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-            <option value="claude-opus-4-6">Claude Opus 4.6</option>
-            <option value="claude-opus-4-20250514">Claude Opus 4</option>
+            <optgroup label="Anthropic (Claude)" id="modelGroupAnthropic">
+              <option value="">默认 (Claude Sonnet 4.6)</option>
+              <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+              <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+              <option value="claude-opus-4-6">Claude Opus 4.6</option>
+              <option value="claude-opus-4-20250514">Claude Opus 4</option>
+            </optgroup>
+            <optgroup label="DeepSeek" id="modelGroupDeepSeek">
+              <option value="deepseek-chat">DeepSeek-V3 (deepseek-chat)</option>
+              <option value="deepseek-reasoner">DeepSeek-R1 (deepseek-reasoner)</option>
+            </optgroup>
           </select>
           <div class="settings-hint">留空使用默认模型</div>
         </div>
@@ -210,12 +225,16 @@
         <div class="settings-divider"></div>
         <div class="settings-group">
           <label class="settings-label">手机连接</label>
-          <div class="settings-hint">扫码将 Android 手机连接到此电脑，远程聊天</div>
+          <div class="settings-hint">扫码连接手机到此电脑</div>
           <div id="pairSection">
             <div id="pairUnpaired">
               <button class="settings-save" id="pairGenerate" style="margin-top:8px">生成连接码</button>
             </div>
             <div id="pairPaired" style="display:none">
+              <div style="display:flex;gap:8px;margin-top:8px">
+                <button class="settings-save" id="pairShowAndroid" style="flex:1;font-size:12px;background:#333">Android</button>
+                <button class="settings-save" id="pairShowiPhone" style="flex:1;font-size:12px;background:#333">iPhone</button>
+              </div>
               <div id="pairQrContainer" style="text-align:center;margin:12px 0"></div>
               <div class="settings-hint" id="pairStatusText" style="text-align:center;margin-top:4px"></div>
               <button class="settings-save" id="pairRevoke" style="margin-top:8px;background:#f87171">断开连接</button>

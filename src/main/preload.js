@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("herAPI", {
   generatePair: (payload) => ipcRenderer.invoke("her:generate-pair", payload),
   revokePair: () => ipcRenderer.invoke("her:revoke-pair"),
   getPairStatus: () => ipcRenderer.invoke("her:get-pair-status"),
+  getIphoneQr: () => ipcRenderer.invoke("her:get-iphone-qr"),
   getNewsBriefing: () => ipcRenderer.invoke("her:get-news-briefing"),
   saveNewsBriefing: (payload) => ipcRenderer.invoke("her:save-news-briefing", payload),
   onEvent: (listener) => {

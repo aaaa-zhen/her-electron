@@ -159,17 +159,71 @@ async function refreshPairUI() {
   } catch (_) {}
 }
 
+function detectProvider(model, baseURL) {
+  if (model && model.startsWith("deepseek")) return "deepseek";
+  if (baseURL && baseURL.includes("deepseek.com")) return "deepseek";
+  return "anthropic";
+}
+
+function syncProviderUI(provider) {
+  const baseUrlSelect = document.getElementById("settingsBaseUrl");
+  const baseUrlHint = document.getElementById("baseUrlHint");
+  const modelGroupAnthropic = document.getElementById("modelGroupAnthropic");
+  const modelGroupDeepSeek = document.getElementById("modelGroupDeepSeek");
+
+  if (provider === "deepseek") {
+    // Show only DeepSeek base URLs
+    for (const opt of baseUrlSelect.options) {
+      opt.hidden = !opt.value.includes("deepseek.com");
+    }
+    baseUrlSelect.value = "https://api.deepseek.com";
+    baseUrlHint.textContent = "DeepSeek 官方 API";
+    modelGroupAnthropic.hidden = true;
+    modelGroupDeepSeek.hidden = false;
+    // Auto-select first DeepSeek model if current is not DeepSeek
+    const modelSelect = document.getElementById("settingsModel");
+    if (!modelSelect.value.startsWith("deepseek")) {
+      modelSelect.value = "deepseek-chat";
+    }
+  } else {
+    for (const opt of baseUrlSelect.options) {
+      opt.hidden = opt.value.includes("deepseek.com");
+    }
+    if (baseUrlSelect.value.includes("deepseek.com")) {
+      baseUrlSelect.value = "https://www.packyapi.com";
+    }
+    baseUrlHint.textContent = "中转站无需翻墙，官方线路需自备梯子";
+    modelGroupAnthropic.hidden = false;
+    modelGroupDeepSeek.hidden = true;
+    const modelSelect = document.getElementById("settingsModel");
+    if (modelSelect.value.startsWith("deepseek")) {
+      modelSelect.value = "";
+    }
+  }
+}
+
 function initSettingsPanel() {
   const settingsOverlay = document.getElementById("settingsOverlay");
+
+  document.getElementById("settingsProvider").addEventListener("change", (e) => {
+    syncProviderUI(e.target.value);
+  });
 
   document.getElementById("settingsBtn").addEventListener("click", async () => {
     try {
       const s = await window.herAPI.getSettings();
       document.getElementById("settingsApiKey").value = s.apiKey || "";
+
+      // Detect provider from saved model/baseURL
+      const provider = detectProvider(s.model, s.baseURL);
+      document.getElementById("settingsProvider").value = provider;
+      syncProviderUI(provider);
+
       const baseUrlSelect = document.getElementById("settingsBaseUrl");
-      baseUrlSelect.value = s.baseURL || "https://www.packyapi.com";
-      // If stored URL doesn't match any option, default to proxy
-      if (!baseUrlSelect.value) baseUrlSelect.selectedIndex = 0;
+      if (s.baseURL) baseUrlSelect.value = s.baseURL;
+      if (!baseUrlSelect.value) {
+        baseUrlSelect.value = provider === "deepseek" ? "https://api.deepseek.com" : "https://www.packyapi.com";
+      }
       document.getElementById("settingsModel").value = s.model || "";
       document.getElementById("settingsMsg").textContent = "";
     } catch (_) {}
@@ -236,17 +290,57 @@ function initSettingsPanel() {
 
   // ── Pairing ──
 
+  // Store pairing result for tab switching
+  let pairResult = null;
+  let iphoneQrCache = null;
+
+  function showAndroidQr() {
+    const qrContainer = document.getElementById("pairQrContainer");
+    const statusText = document.getElementById("pairStatusText");
+    document.getElementById("pairShowAndroid").style.background = "#6ee7b7";
+    document.getElementById("pairShowAndroid").style.color = "#000";
+    document.getElementById("pairShowiPhone").style.background = "#333";
+    document.getElementById("pairShowiPhone").style.color = "#fff";
+    if (pairResult && pairResult.qrImage) {
+      qrContainer.innerHTML = `<img src="${pairResult.qrImage}" style="width:200px;height:200px;border-radius:8px;image-rendering:pixelated">`;
+      statusText.textContent = "用 Her Android 扫描此二维码";
+    } else {
+      qrContainer.innerHTML = `<div style="color:var(--text3);font-size:13px">已配对</div>`;
+      statusText.textContent = "";
+    }
+  }
+
+  async function showIphoneQr() {
+    const qrContainer = document.getElementById("pairQrContainer");
+    const statusText = document.getElementById("pairStatusText");
+    document.getElementById("pairShowiPhone").style.background = "#6ee7b7";
+    document.getElementById("pairShowiPhone").style.color = "#000";
+    document.getElementById("pairShowAndroid").style.background = "#333";
+    document.getElementById("pairShowAndroid").style.color = "#fff";
+    qrContainer.innerHTML = `<div style="color:#888;font-size:13px">生成中...</div>`;
+    try {
+      if (!iphoneQrCache) iphoneQrCache = await window.herAPI.getIphoneQr();
+      qrContainer.innerHTML = `<img src="${iphoneQrCache.qrImage}" style="width:200px;height:200px;border-radius:8px;image-rendering:pixelated">`;
+      statusText.textContent = "iPhone 相机扫码 → 打开链接 → 安装快捷指令";
+    } catch (e) {
+      qrContainer.innerHTML = `<div style="color:#f87171;font-size:13px">${e.message}</div>`;
+      statusText.textContent = "";
+    }
+  }
+
+  document.getElementById("pairShowAndroid").addEventListener("click", showAndroidQr);
+  document.getElementById("pairShowiPhone").addEventListener("click", showIphoneQr);
+
   document.getElementById("pairGenerate").addEventListener("click", async () => {
     const btn = document.getElementById("pairGenerate");
     btn.disabled = true;
     btn.textContent = "生成中...";
     try {
-      const result = await window.herAPI.generatePair();
+      pairResult = await window.herAPI.generatePair();
+      iphoneQrCache = null; // reset iPhone QR cache
       document.getElementById("pairUnpaired").style.display = "none";
       document.getElementById("pairPaired").style.display = "";
-      const qrContainer = document.getElementById("pairQrContainer");
-      qrContainer.innerHTML = `<img src="${result.qrImage}" style="width:200px;height:200px;border-radius:8px;image-rendering:pixelated">`;
-      document.getElementById("pairStatusText").textContent = `用 Her Android 扫描此二维码`;
+      showAndroidQr();
     } catch (e) {
       toast(`配对失败: ${e.message}`);
     }
