@@ -848,7 +848,8 @@ class ChatSession extends EventEmitter {
     if (this.tools.setModel) this.tools.setModel(selectedModel);
     const anthropic = createAnthropicClient(this.stores.settingsStore);
 
-    const supportsWebSearch = !settings.baseURL || settings.baseURL.includes("anthropic.com") || settings.baseURL.includes("aihubmix.com");
+    const anthropicBase = settings.anthropicBaseURL || settings.baseURL || "";
+    const supportsWebSearch = !anthropicBase || anthropicBase.includes("anthropic.com") || anthropicBase.includes("aihubmix.com");
     const allTools = [
       ...this.tools.tools,
       // web_search is an Anthropic server-side tool — not supported by some proxies (e.g. Bedrock)

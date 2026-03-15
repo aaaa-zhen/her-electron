@@ -70,15 +70,27 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
 
   ipcMain.handle("her:get-settings", () => {
     const s = stores.settingsStore.get();
+    const mask = (k) => k ? `${k.slice(0, 6)}...${k.slice(-4)}` : "";
     return {
-      apiKey: s.apiKey ? `${s.apiKey.slice(0, 6)}...${s.apiKey.slice(-4)}` : "",
-      baseURL: s.baseURL || "",
+      anthropicApiKey: mask(s.anthropicApiKey),
+      anthropicBaseURL: s.anthropicBaseURL || "",
+      deepseekApiKey: mask(s.deepseekApiKey),
+      deepseekBaseURL: s.deepseekBaseURL || "",
       model: s.model || "",
+      // legacy
+      apiKey: mask(s.apiKey),
+      baseURL: s.baseURL || "",
     };
   });
 
   ipcMain.handle("her:save-settings", async (_event, patch) => {
     const update = {};
+    // Per-provider keys
+    if (patch.anthropicApiKey && !patch.anthropicApiKey.includes("...")) update.anthropicApiKey = patch.anthropicApiKey.replace(/\s+/g, "");
+    if (patch.anthropicBaseURL !== undefined) update.anthropicBaseURL = patch.anthropicBaseURL.trim();
+    if (patch.deepseekApiKey && !patch.deepseekApiKey.includes("...")) update.deepseekApiKey = patch.deepseekApiKey.replace(/\s+/g, "");
+    if (patch.deepseekBaseURL !== undefined) update.deepseekBaseURL = patch.deepseekBaseURL.trim();
+    // Legacy fields (for backward compat)
     if (patch.apiKey && !patch.apiKey.includes("...")) update.apiKey = patch.apiKey.replace(/\s+/g, "");
     if (patch.baseURL !== undefined) update.baseURL = patch.baseURL.trim();
     if (patch.model !== undefined) update.model = patch.model.trim();

@@ -24,8 +24,11 @@ const PROXY_BASE_URL = "https://www.packyapi.com";
 
 function createAnthropicClient(settingsStore) {
   const settings = settingsStore.get();
-  const apiKey = settings.apiKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
-  const baseURL = settings.baseURL || process.env.ANTHROPIC_BASE_URL || PROXY_BASE_URL;
+  // Only fall back to legacy apiKey if it looks like an Anthropic key (not a DeepSeek key)
+  const legacyKey = settings.apiKey && (settings.apiKey.startsWith("sk-ant") || !settings.deepseekApiKey) ? settings.apiKey : "";
+  const legacyURL = settings.baseURL && !settings.baseURL.includes("deepseek.com") ? settings.baseURL : "";
+  const apiKey = settings.anthropicApiKey || legacyKey || process.env.ANTHROPIC_API_KEY || PROXY_API_KEY;
+  const baseURL = settings.anthropicBaseURL || legacyURL || process.env.ANTHROPIC_BASE_URL || PROXY_BASE_URL;
   const isOAuth = apiKey.startsWith("sk-ant-oat");
 
   const opts = {

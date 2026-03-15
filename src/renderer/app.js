@@ -908,8 +908,11 @@ function setModelDisplay(model) {
   else if ((model || "").includes("opus")) element.textContent = "Opus";
   else if ((model || "").includes("sonnet")) element.textContent = "Sonnet";
   else if ((model || "").includes("haiku")) element.textContent = "Haiku";
+  else if (model === "deepseek-chat") element.textContent = "DeepSeek V3";
+  else if (model === "deepseek-reasoner") element.textContent = "DeepSeek R1";
   else element.textContent = model || "Model";
 }
+window.setModelDisplay = setModelDisplay;
 
 // --- Event listeners ---
 

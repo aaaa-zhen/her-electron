@@ -9,10 +9,11 @@ const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 
 function createDeepSeekClient(settingsStore) {
   const settings = settingsStore.get();
-  const apiKey = settings.apiKey || "";
-  // Only use stored baseURL if it's a DeepSeek endpoint; otherwise default
-  const storedURL = settings.baseURL || "";
-  const baseURL = storedURL.includes("deepseek.com") ? storedURL : DEEPSEEK_BASE_URL;
+  // Only fall back to legacy apiKey if it doesn't look like an Anthropic key
+  const legacyKey = settings.apiKey && !settings.apiKey.startsWith("sk-ant") ? settings.apiKey : "";
+  const apiKey = settings.deepseekApiKey || legacyKey || "";
+  const storedURL = settings.deepseekBaseURL || "";
+  const baseURL = storedURL || DEEPSEEK_BASE_URL;
 
   return {
     apiKey,
