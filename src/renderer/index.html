@@ -101,6 +101,12 @@
     <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 17v5"/><path d="M9 11V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v7"/><path d="M5 17h14"/><path d="M7 17l1.5-6h7L17 17"/>
     </symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+    </symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+    </symbol>
     <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
       <circle cx="12" cy="12" r="3"/>
@@ -108,8 +114,13 @@
   </svg>
 
   <header>
-    <div class="hd-name">Her <span class="hd-dot" id="statusDot"></span><span class="hd-status" id="statusText"></span></div>
+    <div class="hd-name">Her</div>
+    <span class="hd-dot" id="statusDot" style="display:none"></span>
+    <span class="hd-status" id="statusText" style="display:none"></span>
     <div class="hd-actions">
+      <button class="hd-btn" id="themeBtn" title="切换日/夜模式">
+        <svg><use href="#i-sun"/></svg>
+      </button>
       <button class="hd-btn" id="settingsBtn" title="设置">
         <svg><use href="#i-settings"/></svg>
       </button>
@@ -150,10 +161,8 @@
       </div>
     </div>
     <div class="input-hint">
-      <span>输入 / 打开快捷菜单</span>
       <span style="display:flex;align-items:center;gap:8px">
-        <span id="modelSelect" data-value="claude-sonnet-4-6" style="color:var(--text3);font-size:11px">Sonnet 4.6</span>
-        <span class="usage-display" id="usageDisplay"></span>
+        <span id="modelSelect" data-value="claude-sonnet-4-6" style="color:var(--text3);font-size:11px">Sonnet</span>
       </span>
     </div>
     <div class="slash-menu" id="slashMenu">
@@ -240,6 +249,14 @@
               <button class="settings-save" id="pairRevoke" style="margin-top:8px;background:#f87171">断开连接</button>
             </div>
           </div>
+        </div>
+
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <label class="settings-label">版本更新</label>
+          <div class="settings-hint" id="updateVersionText">当前版本：加载中...</div>
+          <button class="settings-save" id="checkUpdateBtn" style="margin-top:8px">检查更新</button>
+          <div class="settings-hint" id="updateStatus" style="margin-top:6px"></div>
         </div>
 
         <div class="settings-footer">

@@ -60,6 +60,21 @@ function scrollDown() {
   });
 }
 
+// --- Office file branding ---
+
+function getOfficeFileInfo(ext) {
+  const map = {
+    xlsx: { letter: "X", bg: "#217346" },
+    xls:  { letter: "X", bg: "#217346" },
+    pptx: { letter: "P", bg: "#D24726" },
+    ppt:  { letter: "P", bg: "#D24726" },
+    docx: { letter: "W", bg: "#2B579A" },
+    doc:  { letter: "W", bg: "#2B579A" },
+    pdf:  { letter: "PDF", bg: "#E5252A" },
+  };
+  return map[ext] || null;
+}
+
 // --- Streaming ---
 
 function finishCmd() {
@@ -145,7 +160,7 @@ function getHerGroup() {
   message.className = "msg msg-her";
   const bubble = document.createElement("div");
   bubble.className = "bubble fade-in";
-  bubble.innerHTML = '<div class="her-label"><svg><use href="#i-bot"/></svg> Her</div>';
+  bubble.innerHTML = '';
   message.appendChild(bubble);
   msgList.appendChild(message);
   streamGroup = bubble;
@@ -398,10 +413,29 @@ function renderRelationshipSetup(setup = currentRelationshipSetup || { needsSetu
       currentRelationshipSetup = result.onboarding || { needsSetup: false, profile: result.profile || null };
       msgList.innerHTML = "";
       window._firstMeetMode = true;
+
+      // If no API key configured yet, prompt before entering main UI
+      if (currentRelationshipSetup.needsApiKey) {
+        showApiKeySetup(() => {
+          renderPresenceHome(currentPresence);
+          triggerFirstMeet();
+        });
+        return;
+      }
+
       renderPresenceHome(currentPresence);
-      setTimeout(() => {
-        window.herAPI.sendMessage({
-          message: `[system:first_meet] 这是用户第一次使用 Her。请你现在主动扫描用户的环境来了解他——调用这些工具：
+      triggerFirstMeet();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "好，我记住了";
+      toast(`保存失败: ${error.message}`);
+    }
+  }
+
+  function triggerFirstMeet() {
+    setTimeout(() => {
+      window.herAPI.sendMessage({
+        message: `[system:first_meet] 这是用户第一次使用 Her。请你现在主动扫描用户的环境来了解他——调用这些工具：
 1. apple_notes (action: list) — 看看用户的备忘录
 2. apple_reminders (action: list) — 看看用户的待办
 3. recent_files (days: 3) — 看看最近在弄什么文件
@@ -418,13 +452,8 @@ function renderRelationshipSetup(setup = currentRelationshipSetup || { needsSetu
 - 最后留一个轻轻的钩子，让用户好奇想追问，但不要太直接
 - 控制在 150 字以内，少即是多
 - 用中文`,
-        });
-      }, 500);
-    } catch (error) {
-      button.disabled = false;
-      button.textContent = "好，我记住了";
-      toast(`保存失败: ${error.message}`);
-    }
+      });
+    }, 500);
   }
 
   renderStep();
@@ -627,7 +656,18 @@ function handle(data) {
   }
 
   if (data.type === "stream_end") {
-    removePhase(); finishCmd(); endStream(); finalizeHerGroup();
+    removePhase(); finishCmd();
+    // End the stream content but keep isGenerating true — the backend may
+    // still be executing tools. setGenerating(false) will be called by the
+    // final "done" event or when the next user message cycle starts.
+    if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
+    if (streamEl && streamBuf) finalizeStreamMarkup();
+    if (streamEl) streamEl.classList.remove("typing-cursor");
+    if (streamGroup) streamGroup.classList.remove("streaming", "fade-in");
+    streamEl = null;
+    streamBuf = "";
+    currentCmd = null;
+    scrollDown();
     return;
   }
 
@@ -673,8 +713,14 @@ function handle(data) {
     if (data.fileType === "video") preview = `<video controls preload="metadata" src="${data.url}"></video>`;
     else if (data.fileType === "image") preview = `<img class="file-preview" src="${data.url}" alt="${esc(data.filename)}">`;
     else if (data.fileType === "audio") preview = `<audio controls src="${data.url}"></audio>`;
+    const ext = (data.filename || "").split(".").pop().toLowerCase();
+    const officeInfo = getOfficeFileInfo(ext);
     const icons = { video: "#i-video", image: "#i-image", audio: "#i-music", file: "#i-file" };
-    card.innerHTML = `${preview}<div class="file-bar"><div class="file-icon"><svg><use href="${icons[data.fileType] || "#i-file"}"/></svg></div><div class="file-meta"><div class="file-name">${esc(data.filename)}</div><div class="file-size">${data.size}</div></div><a class="file-dl" href="${data.url}" download="${esc(data.filename)}"><svg><use href="#i-download"/></svg></a></div>`;
+    const iconHtml = officeInfo
+      ? `<div class="file-icon-office" style="background:${officeInfo.bg}"><span>${officeInfo.letter}</span></div>`
+      : `<div class="file-icon"><svg><use href="${icons[data.fileType] || "#i-file"}"/></svg></div>`;
+    const sizeLabel = officeInfo ? `${data.size} · 刚刚生成` : data.size;
+    card.innerHTML = `${preview}<div class="file-bar">${iconHtml}<div class="file-meta"><div class="file-name">${esc(data.filename)}</div><div class="file-size">${sizeLabel}</div></div><a class="file-dl" href="${data.url}" download="${esc(data.filename)}"><svg><use href="#i-download"/></svg></a></div>`;
     group.appendChild(card);
     scrollDown();
     return;
@@ -752,6 +798,9 @@ function handle(data) {
   }
 
   if (data.type === "presence") {
+    // Presence signals the turn is fully complete — safe to end generating state
+    if (isGenerating) setGenerating(false);
+    finalizeHerGroup();
     currentPresence = data.presence || getFallbackPresence();
     currentRelationshipSetup = {
       needsSetup: Boolean(currentPresence.needsRelationshipSetup),
@@ -787,7 +836,8 @@ function handle(data) {
   if (data.type === "clear") {
     removePhase(); finalizeHerGroup(); endStream(); removeThinking();
     currentCmd = null;
-    document.getElementById("usageDisplay").className = "usage-display";
+    const usageEl = document.getElementById("usageDisplay");
+    if (usageEl) usageEl.className = "usage-display";
     if (currentRelationshipSetup && currentRelationshipSetup.needsSetup) renderRelationshipSetup(currentRelationshipSetup);
     else renderPresenceHome(currentPresence || getFallbackPresence());
     sendBtn.disabled = true;
@@ -833,6 +883,7 @@ function handle(data) {
 
   if (data.type === "usage") {
     const element = document.getElementById("usageDisplay");
+    if (!element) return;
     const tokens = data.input_tokens + data.output_tokens;
     const count = tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens;
     element.textContent = `${count} tokens · $${data.total_cost}`;
@@ -868,7 +919,7 @@ function handle(data) {
         el.className = "msg msg-her";
         const bubble = document.createElement("div");
         bubble.className = "bubble";
-        bubble.innerHTML = '<div class="her-label"><svg><use href="#i-bot"/></svg> Her</div>';
+        bubble.innerHTML = '';
         const content = document.createElement("div");
         content.className = "md";
         content.innerHTML = mdCached(message.text);
@@ -1089,6 +1140,22 @@ window.addEventListener("resize", () => {
   });
 }());
 
+// --- Theme toggle ---
+
+const themeBtn = document.getElementById("themeBtn");
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.body.style.background = getComputedStyle(document.documentElement).getPropertyValue("--bg");
+  const icon = theme === "light" ? "#i-moon" : "#i-sun";
+  themeBtn.innerHTML = `<svg><use href="${icon}"/></svg>`;
+  localStorage.setItem("her-theme", theme);
+}
+themeBtn.addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  applyTheme(current === "dark" ? "light" : "dark");
+});
+applyTheme(localStorage.getItem("her-theme") || "dark");
+
 // --- Init settings panel & bootstrap ---
 
 initSettingsPanel();
@@ -1104,11 +1171,18 @@ async function bootstrapApp() {
     };
     setStatusConnected();
     setModelDisplay(bootstrap.model);
-    if (bootstrap.messages && bootstrap.messages.length > 0) handle({ type: "restore", messages: bootstrap.messages });
-    else if (currentRelationshipSetup.needsSetup) {
+    if (currentRelationshipSetup.needsSetup) {
       showOnboarding(() => renderRelationshipSetup(currentRelationshipSetup));
+    } else if (currentRelationshipSetup.needsApiKey) {
+      showApiKeySetup(() => {
+        if (bootstrap.messages && bootstrap.messages.length > 0) handle({ type: "restore", messages: bootstrap.messages });
+        else renderPresenceHome(currentPresence);
+      });
+    } else if (bootstrap.messages && bootstrap.messages.length > 0) {
+      handle({ type: "restore", messages: bootstrap.messages });
+    } else {
+      renderPresenceHome(currentPresence);
     }
-    else renderPresenceHome(currentPresence);
     refreshPassiveContext({ rerender: true }).catch(() => {});
     handle({ type: "client_status", ...bootstrap.status });
     if (bootstrap.usage && (bootstrap.usage.input_tokens || bootstrap.usage.output_tokens)) {

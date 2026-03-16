@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { ipcMain, clipboard } = require("electron");
+const { ipcMain, clipboard, shell, app } = require("electron");
 const { safePath, toFileUrl } = require("../core/tools/helpers");
 const { readCurrentBrowserContext } = require("../core/browser-companion-monitor");
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
@@ -357,6 +357,47 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     });
     return { qrImage: qrDataUrl, url: shortcutsUrl };
   });
+
+  // --- Update check ---
+  const UPDATE_SERVER = "http://43.134.52.155";
+
+  ipcMain.handle("her:check-update", async () => {
+    try {
+      const currentVersion = app.getVersion();
+      const res = await fetch(`${UPDATE_SERVER}/version.json?t=${Date.now()}`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return { hasUpdate: false, currentVersion, error: "服务器无响应" };
+      const data = await res.json();
+      const latestVersion = data.version;
+      const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion,
+        changelog: data.changelog || "",
+        downloadUrl: process.platform === "darwin"
+          ? (process.arch === "arm64" ? data.dmgArm64 : data.dmgIntel)
+          : data.exe,
+      };
+    } catch (err) {
+      return { hasUpdate: false, currentVersion: app.getVersion(), error: err.message };
+    }
+  });
+
+  ipcMain.handle("her:open-url", (_event, url) => {
+    if (typeof url === "string" && url.startsWith("http")) shell.openExternal(url);
+  });
+}
+
+function compareVersions(a, b) {
+  const pa = (a || "0").split(".").map(Number);
+  const pb = (b || "0").split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
 }
 
 module.exports = { registerIpc };

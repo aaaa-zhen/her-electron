@@ -49,11 +49,8 @@ function showApiKeySetup(onDone) {
 
 function showOnboarding(onDone) {
   const slides = [
-    { icon: "i-clock", headline: "工业革命让我们<span class=\"accent\">围着时钟</span>转", sub: "日程表、闹钟、倒计时——我们把生活切成了一格一格。" },
-    { icon: "i-globe", headline: "你不用再每次都<span class=\"accent\">从头解释自己</span>", sub: "我会慢慢记住你的语气、你最近在忙的事，还有那些你没说完的话。" },
-    { icon: "i-brain", headline: "我不只是<span class=\"accent\">回答你</span>", sub: "你发给我的图片、文件、提醒，还有今天发生过的事，我会把它们接成同一条线。" },
-    { icon: "i-heart", headline: "Her 会越来越像那个<span class=\"accent\">懂你的人</span>", sub: "不是因为我拿到了很多数据，而是因为我会在时间里慢慢认识你。" },
-    { icon: "i-sparkles", headline: "开始之前，先让我<span class=\"accent\">认识你一点点</span>", sub: "你告诉我你喜欢我怎么陪你。剩下的，我会慢慢学。" },
+    { icon: "i-heart", headline: "聊过的事，我<span class=\"accent\">都记得</span>", sub: "不用翻记录，不用重新解释。\n你说过什么、最近在忙什么，我都在。" },
+    { icon: "i-sparkles", headline: "你喜欢我<span class=\"accent\">怎么陪你</span>", sub: "话多还是话少，主动还是安静——\n你说了算，剩下的我慢慢学。" },
   ];
 
   const overlay = document.createElement("div");
@@ -70,20 +67,9 @@ function showOnboarding(onDone) {
     overlay.appendChild(el);
   });
 
-  const dots = document.createElement("div");
-  dots.className = "onboarding-dots";
-  slides.forEach((_, i) => {
-    const dot = document.createElement("div");
-    dot.className = `onboarding-dot${i === 0 ? " active" : ""}`;
-    dot.style.cursor = "pointer";
-    dot.addEventListener("click", () => goTo(i));
-    dots.appendChild(dot);
-  });
-  overlay.appendChild(dots);
-
   const cta = document.createElement("button");
-  cta.className = `onboarding-cta${slides.length <= 1 ? " visible" : ""}`;
-  cta.innerHTML = `<span class="cta-inner"><svg><use href="#i-sparkles"/></svg>先认识一下</span>`;
+  cta.className = "onboarding-cta visible";
+  cta.innerHTML = `<span class="cta-inner"><svg><use href="#i-sparkles"/></svg>开始</span>`;
   overlay.appendChild(cta);
 
   const skip = document.createElement("button");
@@ -100,17 +86,18 @@ function showOnboarding(onDone) {
     if (transitioning || index === current || index < 0 || index >= slides.length) return;
     transitioning = true;
     const allSlides = overlay.querySelectorAll(".onboarding-slide");
-    const allDots = overlay.querySelectorAll(".onboarding-dot");
     allSlides[current].classList.remove("active");
     allSlides[current].classList.add("exit");
     allSlides[index].classList.remove("exit");
     void allSlides[index].offsetWidth;
     allSlides[index].classList.add("active");
-    allDots[current].classList.remove("active");
-    allDots[index].classList.add("active");
     current = index;
-    if (current === slides.length - 1) cta.classList.add("visible");
-    else cta.classList.remove("visible");
+    const ctaLabel = cta.querySelector(".cta-inner");
+    if (current === slides.length - 1) {
+      ctaLabel.innerHTML = `<svg><use href="#i-sparkles"/></svg>好，开始吧`;
+    } else {
+      ctaLabel.innerHTML = `<svg><use href="#i-sparkles"/></svg>继续`;
+    }
     setTimeout(() => { transitioning = false; }, 1200);
   }
 
@@ -126,11 +113,15 @@ function showOnboarding(onDone) {
   }, 3500);
 
   overlay.addEventListener("click", (e) => {
-    if (e.target === cta || e.target === skip) return;
+    if (e.target === cta || cta.contains(e.target) || e.target === skip) return;
     if (current < slides.length - 1) { clearInterval(autoTimer); goTo(current + 1); }
   });
 
-  cta.addEventListener("click", () => { clearInterval(autoTimer); finish(); });
+  cta.addEventListener("click", () => {
+    clearInterval(autoTimer);
+    if (current < slides.length - 1) goTo(current + 1);
+    else finish();
+  });
   skip.addEventListener("click", () => { clearInterval(autoTimer); finish(); });
 }
 
@@ -424,5 +415,59 @@ function initSettingsPanel() {
       toast(`断开失败: ${e.message}`);
     }
     btn.disabled = false;
+  });
+
+  // ── Update check ──
+
+  const checkUpdateBtn = document.getElementById("checkUpdateBtn");
+  const updateStatus = document.getElementById("updateStatus");
+  const updateVersionText = document.getElementById("updateVersionText");
+
+  // Show current version on settings open
+  const origSettingsClick = document.getElementById("settingsBtn")._herSettingsInited;
+  if (!origSettingsClick) {
+    document.getElementById("settingsBtn")._herSettingsInited = true;
+    document.getElementById("settingsBtn").addEventListener("click", () => {
+      updateStatus.textContent = "";
+      checkUpdateBtn.textContent = "检查更新";
+      checkUpdateBtn.disabled = false;
+      window.herAPI.checkUpdate().then((res) => {
+        updateVersionText.textContent = `当前版本：v${res.currentVersion}`;
+      }).catch(() => {});
+    });
+  }
+
+  checkUpdateBtn.addEventListener("click", async () => {
+    checkUpdateBtn.disabled = true;
+    checkUpdateBtn.textContent = "检查中...";
+    updateStatus.textContent = "";
+    updateStatus.style.color = "";
+    try {
+      const res = await window.herAPI.checkUpdate();
+      updateVersionText.textContent = `当前版本：v${res.currentVersion}`;
+      if (res.error) {
+        updateStatus.textContent = `检查失败：${res.error}`;
+        updateStatus.style.color = "#f87171";
+        checkUpdateBtn.textContent = "重试";
+      } else if (res.hasUpdate) {
+        updateStatus.innerHTML = `<span style="color:#16a34a;font-weight:600">发现新版本 v${res.latestVersion}</span>`;
+        if (res.changelog) {
+          updateStatus.innerHTML += `<br><span style="color:var(--text2);font-size:11px">${res.changelog}</span>`;
+        }
+        checkUpdateBtn.textContent = "下载更新";
+        checkUpdateBtn.onclick = () => {
+          if (res.downloadUrl) window.herAPI.openUrl(res.downloadUrl);
+        };
+      } else {
+        updateStatus.textContent = "已是最新版本";
+        updateStatus.style.color = "#16a34a";
+        checkUpdateBtn.textContent = "检查更新";
+      }
+    } catch (e) {
+      updateStatus.textContent = `检查失败：${e.message}`;
+      updateStatus.style.color = "#f87171";
+      checkUpdateBtn.textContent = "重试";
+    }
+    checkUpdateBtn.disabled = false;
   });
 }

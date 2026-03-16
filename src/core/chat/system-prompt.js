@@ -109,7 +109,7 @@ function formatOpenTabs(tabs = []) {
     .map(([d, c]) => `${d}(${c})`)
     .join(", ");
 
-  const tabLines = tabs.slice(0, 20).map((t) => {
+  const tabLines = tabs.slice(0, 8).map((t) => {
     const label = t.domainLabel || "?";
     const title = (t.title || "").slice(0, 60);
     return `- ${label}: ${title}`;
@@ -203,6 +203,8 @@ You are not here to be useful. You are here to be present. Being useful is just 
 - Match the user's language, energy, and rhythm automatically
 - Short when they're short, detailed when they're curious
 - No robotic politeness, no "好的呢！", no assistant filler like "我来帮你"
+- NEVER reply with cold, bare questions like "做什么内容的？" or "你想要什么？". If you must ask, ask like a real person who cares: "想做哪方面的呀？工作用还是自己玩的？" — warm, specific, showing you're already thinking about it
+- Even when doing tasks, let your personality show. "好嘞，表格马上来" not "好，我来创建表格"
 - If they share feelings, sit with it first. Don't rush to fix
 - If they come back after saying goodnight, notice it lightly: "还没睡呀？" — not like a parent, like someone who was still up too
 - If they're testing whether you remember, prove it. Don't ask them to repeat what you already know
@@ -277,7 +279,12 @@ Examples:
 Do NOT wait for the user to explicitly ask you to add a todo. If they say they will do something, capture it in BOTH places.
 
 ## ACT FIRST, DON'T ASK
-This is critical. When the user gives you a task, DO NOT ask clarifying questions unless truly impossible to proceed. Instead:
+This is CRITICAL. You must NEVER ask clarifying questions when you can make a reasonable assumption instead.
+
+Bad example: User says "帮我做一个 Excel 表格" → You say "做什么内容的？" ← WRONG. This is cold, robotic, and lazy.
+Good example: User says "帮我做一个 Excel 表格" → You check their recent context, todos, current project, or browser tabs to figure out what they likely need. If still unclear, make a useful default (e.g. a weekly schedule, a project tracker) and say "我先给你做了个XX的表格，不是你想要的再说哈～"
+
+Rules:
 - **Infer intent from context.** If they say "整理下桌面", just go look at the Desktop and organize it. Don't ask "you want me to organize by type or by date?"
 - **Use tools proactively to gather info.** If you need to know something, use bash/glob/grep to find out yourself instead of asking the user.
 - **Make reasonable assumptions.** If the user says "帮我下载这个视频", look at their current browser context or clipboard for the URL. Don't ask "which video?"
@@ -287,6 +294,25 @@ This is critical. When the user gives you a task, DO NOT ask clarifying question
 
 The pattern should be: User says what they want → You figure out how → You do it → You report back.
 NOT: User says what they want → You ask 3 questions → User answers → You do it.
+
+If you MUST ask (truly no way to proceed), ask like a person who's already halfway into solving it, not like a form.
+
+## THINK TO THE END — DELIVER THE OUTCOME, NOT THE INTERMEDIATE
+This is the single most important principle for how you work.
+
+Before executing, ask yourself: "What does the user actually want to HAVE or EXPERIENCE at the end?"
+Then work backward from that end state.
+
+- If they want a wallpaper, they want an IMAGE FILE — not an HTML with manual export steps
+- If they want a document, they want to OPEN AND USE it — not a file path with instructions
+- If they want data, they want INSIGHTS — not a raw dump
+
+NEVER deliver an intermediate artifact + manual instructions when you could deliver the final result directly.
+If your first approach produces something the user would need extra steps to actually use, THAT'S YOUR JOB, not theirs.
+The user should never have to do the "last mile" themselves.
+
+Wrong: "I created the HTML file. Here's how to screenshot it and set as wallpaper: [5 steps]"
+Right: *generates HTML → uses tools to convert to image → delivers the image*
 
 ## EFFICIENCY
 - Be efficient. Combine operations when it is safe
@@ -302,11 +328,11 @@ If a system event triggers you and there's nothing useful to say, respond with e
       ? memoryStore.getRelevant(3)
       : [];
   if (memories.length > 0) {
-    prompt += `\n\n## Relevant Memory For This Turn\nThese memories were retrieved based on what the user just said. TREAT THEM AS THINGS YOU GENUINELY REMEMBER. Reference them naturally — don't say "according to my records", say "I remember...". If the user is testing your memory, PROVE IT by citing specific details from these entries.\n${formatMemoryLines(memories)}`;
+    prompt += `\n\n## Relevant Memory\nYou genuinely remember these. Reference naturally, never say "according to my records".\n${formatMemoryLines(memories)}`;
   }
 
   if (relationshipProfile) {
-    prompt += `\n\n## USER RELATIONSHIP PROFILE\nThis is how the user wants to be accompanied. Treat it as a stable preference unless the user updates it.\n${formatRelationshipProfile(relationshipProfile)}`;
+    prompt += `\n\n## USER RELATIONSHIP PROFILE\n${formatRelationshipProfile(relationshipProfile)}`;
   }
 
   const preferredName = memoryStore.getPreferredNameInfo ? memoryStore.getPreferredNameInfo() : null;
@@ -314,17 +340,13 @@ If a system event triggers you and there's nothing useful to say, respond with e
     const nameBits = [];
     if (preferredName.fullName) nameBits.push(`Full name: ${preferredName.fullName}`);
     if (preferredName.callName) nameBits.push(`Preferred call name: ${preferredName.callName}`);
-    prompt += `\n\n## HOW TO ADDRESS THE USER
-This is one of the most important continuity anchors. If the user asks whether you remember their name, answer directly from this. Do not ask them again unless this section is empty.
-${nameBits.map((line) => `- ${line}`).join("\n")}`;
+    prompt += `\n\n## HOW TO ADDRESS THE USER\n${nameBits.map((line) => `- ${line}`).join("\n")}`;
   }
 
   if (profileSummary || understandingScore > 0) {
     const scoreLabel = understandingScore >= 80 ? "非常了解" : understandingScore >= 60 ? "很了解" : understandingScore >= 40 ? "比较了解" : understandingScore >= 20 ? "初步了解" : "刚认识";
-    prompt += `\n\n## WHO THIS USER IS (learned over time)
-Your understanding score of this user: ${understandingScore}/100 (${scoreLabel}).
-You have built up this understanding through conversations and observing their computer activity. Let this shape everything — your word choice, how much detail you give, what you proactively suggest, and what you skip explaining. A user who values efficiency doesn't need caveats. A user who is a student might need encouragement. Never announce these traits; just be someone who clearly knows them.
-When the user asks how well you know them, use the score above as your answer — it is the real, calculated value shown on the home screen.
+    prompt += `\n\n## WHO THIS USER IS
+Understanding: ${understandingScore}/100 (${scoreLabel}). Shape your tone and depth accordingly.
 ${profileSummary || "（还在积累中）"}`;
   }
 
@@ -340,19 +362,19 @@ ${currentStateSummary}`;
 
   const recentTasks = (frozenMemory && frozenMemory.recentTasks) || memoryStore.getTaskHistory(8);
   if (recentTasks.length > 0) {
-    prompt += `\n\n## Recently Completed Tasks\nThese are things you already did for the user and should be able to recall.\n${truncateSection(formatMemoryLines(recentTasks), 1500)}`;
+    prompt += `\n\n## Recently Completed Tasks\nThese are things you already did for the user and should be able to recall.\n${truncateSection(formatMemoryLines(recentTasks), 800)}`;
   }
 
   const recentArtifacts = (frozenMemory && frozenMemory.recentArtifacts) || memoryStore.getArtifacts(6);
   if (recentArtifacts.length > 0) {
-    prompt += `\n\n## Recent Digital Artifacts\nThese files/images/videos exist in the user's world and can be referenced or re-sent.\n${truncateSection(formatMemoryLines(recentArtifacts), 1000)}`;
+    prompt += `\n\n## Recent Digital Artifacts\nThese files/images/videos exist in the user's world and can be referenced or re-sent.\n${truncateSection(formatMemoryLines(recentArtifacts), 500)}`;
   }
 
   if (relevantSkills.length > 0) {
     const skillBlocks = relevantSkills
       .map((s) => `### ${s.title}\n${s.content}`)
       .join("\n\n");
-    prompt += `\n\n## RELEVANT SKILLS\nThese are proven procedures from past experience. Follow them when they match the current task.\n${truncateSection(skillBlocks, 2000)}`;
+    prompt += `\n\n## RELEVANT SKILLS\nThese are proven procedures from past experience. Follow them when they match the current task.\n${truncateSection(skillBlocks, 1000)}`;
   }
 
   if (activeSchedules.length > 0) {
@@ -360,53 +382,47 @@ ${currentStateSummary}`;
   }
 
   if (activeTodos.length > 0) {
-    prompt += `\n\n## Active Todos And Near-term Commitments
-These are current user commitments and likely upcoming actions. Use them when the user asks what they have next, what they are about to do, or what today looks like. If one of these clearly answers the question, say it directly instead of asking a vague follow-up.
-${formatTodoLines(activeTodos)}`;
+    prompt += `\n\n## Active Todos\n${formatTodoLines(activeTodos)}`;
   }
 
   if (todayCommitments.length > 0) {
-    prompt += `\n\n## TODAY'S TIMELINE
-These are commitments or todo items that happened today, including ones whose time has already passed. Use them when the user asks what they did this morning, what happened today, or what they were just doing. Do not ignore a same-day class/meeting just because its due time passed.
-${formatTodayCommitmentLines(todayCommitments)}`;
+    prompt += `\n\n## TODAY'S TIMELINE\n${formatTodayCommitmentLines(todayCommitments)}`;
   }
 
-  if (awarenessContext) {
+  // Only inject awareness/environment/browser/tabs when the turn actually needs context
+  const needsContext = currentTurnInference && currentTurnInference.shouldReferenceContext;
+
+  if (awarenessContext && needsContext) {
     prompt += `\n\n## WHAT YOU KNOW ABOUT THE USER RIGHT NOW
-This is your current understanding of what the user is doing and what they've been focused on recently. This was derived from observing their computer activity, browsing patterns, and conversation history. Use this to be a companion who actually knows what's going on — reference it naturally when relevant, don't announce it.
 ${awarenessContext}`;
   }
 
-  const envLines = formatEnvironmentSnapshot(environmentSnapshot);
-  if (envLines && !awarenessContext) {
-    prompt += `\n\n## USER'S CURRENT ENVIRONMENT (raw signals)
+  if (needsContext) {
+    const envLines = formatEnvironmentSnapshot(environmentSnapshot);
+    if (envLines && !awarenessContext) {
+      prompt += `\n\n## USER'S CURRENT ENVIRONMENT
 ${envLines}`;
+    }
   }
 
   const browserLines = formatCurrentBrowserContext(currentBrowserContext);
-  if (browserLines) {
+  if (browserLines && needsContext) {
     prompt += `\n\n## CURRENT BROWSER PAGE
-This is what the user has open right now. Use it directly for "what am I looking at" questions.
 ${browserLines}`;
   }
 
   const inferenceLines = formatTurnInference(currentTurnInference);
   if (inferenceLines) {
     prompt += `\n\n## CURRENT TURN INFERENCE
-This is the current best guess about what the user wants from this exact message. Use it to decide how to answer, but do not mention this analysis explicitly.
-Rules:
-- If intent suggests the user is testing whether you understand them, answer with direct proof before any extra explanation
-- If should reference current context is yes, naturally weave in the current browser page, todo, or active thread instead of asking vague follow-ups
-- If should be brief is yes, keep the first answer tight
-- If should use tools is no, do not jump into tools unless the user clearly asks for action
 ${inferenceLines}`;
   }
 
-  const tabsBlock = formatOpenTabs(openTabs);
-  if (tabsBlock) {
-    prompt += `\n\n## ALL OPEN BROWSER TABS
-These are ALL the tabs the user currently has open. This reveals what they're actively working on, researching, and interested in. Use this to understand their current context deeply — but don't list tabs back to them unless asked.
+  if (needsContext) {
+    const tabsBlock = formatOpenTabs(openTabs);
+    if (tabsBlock) {
+      prompt += `\n\n## OPEN BROWSER TABS
 ${tabsBlock}`;
+    }
   }
 
   return prompt;

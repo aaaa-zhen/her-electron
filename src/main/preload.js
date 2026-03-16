@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld("herAPI", {
   getIphoneQr: () => ipcRenderer.invoke("her:get-iphone-qr"),
   getNewsBriefing: () => ipcRenderer.invoke("her:get-news-briefing"),
   saveNewsBriefing: (payload) => ipcRenderer.invoke("her:save-news-briefing", payload),
+  checkUpdate: () => ipcRenderer.invoke("her:check-update"),
+  openUrl: (url) => ipcRenderer.invoke("her:open-url", url),
   onEvent: (listener) => {
     const wrapped = (_event, data) => listener(data);
     ipcRenderer.on("her:event", wrapped);

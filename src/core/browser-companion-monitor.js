@@ -206,7 +206,19 @@ async function readFrontmostApp() {
   }
 }
 
+async function isAppRunning(appName) {
+  try {
+    const result = await execFileAsync("osascript", ["-e",
+      `tell application "System Events" to (name of processes) contains "${appName}"`
+    ], { timeout: 2500 });
+    return result === "true";
+  } catch (_) {
+    return false;
+  }
+}
+
 async function readChromeLikeTab(appName) {
+  if (!(await isAppRunning(appName))) return null;
   const script = `
     tell application "${appName}"
       if not (exists front window) then return ""
@@ -222,6 +234,7 @@ async function readChromeLikeTab(appName) {
 }
 
 async function readAllChromeLikeTabs(appName) {
+  if (!(await isAppRunning(appName))) return [];
   const script = `
     tell application "${appName}"
       set allTabs to {}
@@ -252,6 +265,7 @@ async function readAllChromeLikeTabs(appName) {
 }
 
 async function readAllSafariTabs() {
+  if (!(await isAppRunning("Safari"))) return [];
   const script = `
     tell application "Safari"
       set allTabs to {}
@@ -282,6 +296,7 @@ async function readAllSafariTabs() {
 }
 
 async function readSafariTab() {
+  if (!(await isAppRunning("Safari"))) return null;
   const script = `
     tell application "Safari"
       if not (exists front document) then return ""

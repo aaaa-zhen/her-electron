@@ -3,7 +3,7 @@ const { net } = require("electron");
 const { createAnthropicClient } = require("./anthropic-client");
 const { createDeepSeekClient, convertMessagesForDeepSeek, convertToolsForDeepSeek } = require("./deepseek-client");
 const { DEFAULT_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, DEEPSEEK_INPUT_COST_PER_TOKEN, DEEPSEEK_OUTPUT_COST_PER_TOKEN, getProviderForModel } = require("../shared/constants");
-const { compactConversation, estimateTotalTokens } = require("./compaction");
+const { compactConversation, estimateTotalTokens, condenseDag, migrateInlineSummary, assembleContext } = require("./compaction");
 const { extractTurnMemories, extractAIMemories } = require("./memory-extractor");
 const { extractProfileObservations } = require("./profile-extractor");
 const { inferTurn } = require("./turn-inference");
@@ -26,11 +26,17 @@ class ChatSession extends EventEmitter {
     this.environmentMonitor = environmentMonitor || null;
     this.awarenessService = awarenessService || null;
     this.conversationHistory = stores.conversationStore.get();
+    this.dagStore = stores.summaryDagStore || null;
     this.currentAbort = null;
     this.cancelled = false;
     this.activeProcesses = [];
     this.sessionUsage = { input_tokens: 0, output_tokens: 0, total_cost: 0 };
     this.currentTurnContext = null;
+
+    // Migrate old inline [CONVERSATION SUMMARY] to DAG if needed
+    if (this.dagStore) {
+      this.conversationHistory = migrateInlineSummary(this.conversationHistory, this.dagStore);
+    }
 
     this.tools = createTools({
       paths,
@@ -56,8 +62,8 @@ class ChatSession extends EventEmitter {
     const memoryStore = this.stores.memoryStore;
     const profileStore = this.stores.profileStore;
     return {
-      recentTasks: memoryStore.getTaskHistory(8),
-      recentArtifacts: memoryStore.getArtifacts(6),
+      recentTasks: memoryStore.getTaskHistory(4),
+      recentArtifacts: memoryStore.getArtifacts(3),
       identitySnapshot: memoryStore.getIdentitySnapshot(3),
       preferredNameInfo: memoryStore.getPreferredNameInfo ? memoryStore.getPreferredNameInfo() : null,
       profileSummary: profileStore ? profileStore.getPromptSummary(0.25) : "",
@@ -154,7 +160,7 @@ class ChatSession extends EventEmitter {
       usage: this.sessionUsage,
       onboarding: {
         needsSetup: !settings.relationshipSetupCompleted,
-        needsApiKey: false,
+        needsApiKey: !settings.anthropicApiKey && !settings.deepseekApiKey && !settings.apiKey,
         profile: settings.relationshipProfile || null,
       },
     };
@@ -278,7 +284,7 @@ class ChatSession extends EventEmitter {
     }
     suggestions.push(
       { label: "整理桌面", prompt: "帮我整理一下桌面，把文件归类到合适的目录", description: "自动归类桌面上的文件" },
-      { label: "处理图片", prompt: "帮我处理一张图片", description: "去背景、裁剪、缩放、模糊等" },
+      { label: "做表格", prompt: "帮我做一个 Excel 表格", description: "创建数据表、图表、公式等" },
       { label: "聊聊现在", prompt: "先不做任务，陪我聊聊我现在的状态", description: "偏陪伴和关系感的开场" }
     );
 
@@ -338,7 +344,11 @@ class ChatSession extends EventEmitter {
     return {
       profile: nextProfile,
       presence,
-      onboarding: { needsSetup: false, profile: nextProfile },
+      onboarding: {
+        needsSetup: false,
+        needsApiKey: !this.stores.settingsStore.get().anthropicApiKey && !this.stores.settingsStore.get().deepseekApiKey && !this.stores.settingsStore.get().apiKey,
+        profile: nextProfile,
+      },
     };
   }
 
@@ -549,6 +559,7 @@ class ChatSession extends EventEmitter {
         this.currentTurnContext = null;
         this._frozenMemory = this._buildMemorySnapshot();
         this.stores.conversationStore.clear();
+        if (this.dagStore) this.dagStore.clear();
         this.emitPresence();
         this.emit("event", { type: "phase", clear: true });
         this.emit("event", { type: "clear" });
@@ -566,7 +577,7 @@ class ChatSession extends EventEmitter {
         8
       );
       syncTimelineEvents({ memoryStore: this.stores.memoryStore, todayCommitments });
-      const relevantMemories = this.stores.memoryStore.getContextual(messageText, 12);
+      const relevantMemories = this.stores.memoryStore.getContextual(messageText, 6);
       // Semantic search runs in background (non-blocking); keyword results are used immediately
       // to eliminate the 1-3 second embedding API delay before streaming starts
 
@@ -634,6 +645,7 @@ class ChatSession extends EventEmitter {
         conversationHistory: this.conversationHistory,
         anthropic: this.createAnthropicClient(),
         emit: (event) => this.emit("event", event),
+        dagStore: this.dagStore,
       });
       if (compacted.compacted) {
         this.conversationHistory = compacted.newHistory;
@@ -757,6 +769,13 @@ class ChatSession extends EventEmitter {
       }
 
       this.stores.conversationStore.save(this.conversationHistory);
+
+      // Post-turn: condense DAG if too many uncondensed leaves
+      if (this.dagStore && this.dagStore.getUncondensedLeafCount() >= 4) {
+        condenseDag({ dagStore: this.dagStore, anthropic: this.createAnthropicClient() }).catch((err) => {
+          console.error("[Chat] DAG condensation error:", err.message);
+        });
+      }
     } catch (error) {
       this.currentAbort = null;
       if (this.cancelled || error.name === "AbortError") return;

@@ -23,7 +23,6 @@ const SETUP_STEPS = [
   { group: "tone", title: "选择说话风格", subtitle: "我先用什么样的方式陪你，会让你更舒服？" },
   { group: "relationshipMode", title: "选择关系模式", subtitle: "在你这边，我更像什么？" },
   { group: "proactivity", title: "选择主动程度", subtitle: "我主动一点，会不会打扰你？" },
-  { group: "focus", title: "最近关注什么", subtitle: "告诉我最近你最想让我接住哪件事" },
 ];
 
 const TRAIT_ZH = {

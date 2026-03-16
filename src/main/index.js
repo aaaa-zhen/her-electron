@@ -12,6 +12,7 @@ const { ProfileStore } = require("../core/storage/profile-store");
 const { StateStore } = require("../core/storage/state-store");
 const { BrowserHistoryStore } = require("../core/storage/browser-history-store");
 const { SkillStore } = require("../core/storage/skill-store");
+const { SummaryDagStore } = require("../core/storage/summary-dag-store");
 const { createAnthropicClient } = require("../core/chat/anthropic-client");
 const { ScheduleService } = require("../core/chat/schedule-service");
 const { ContextMonitor } = require("../core/context-monitor");
@@ -123,6 +124,7 @@ async function initializeApp() {
     stateStore: new StateStore(paths.dataDir),
     browserHistoryStore: new BrowserHistoryStore(paths.dataDir),
     skillStore: new SkillStore(paths.dataDir),
+    summaryDagStore: new SummaryDagStore(paths.dataDir),
   };
 
   scheduleService = new ScheduleService({
