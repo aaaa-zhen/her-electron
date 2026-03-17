@@ -11,11 +11,14 @@ const DEEPSEEK_OUTPUT_COST_PER_TOKEN = 2 / 1_000_000;   // ¥2/M ≈ $0.28/M
 const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"];
 
 /**
- * Detect provider from model name.
+ * Detect provider from model name and optional base URL.
+ * When deepseekBaseURL points to a non-DeepSeek endpoint (e.g. CLIProxyAPI),
+ * route all models through the OpenAI-compatible (deepseek) client.
  */
-function getProviderForModel(model) {
+function getProviderForModel(model, deepseekBaseURL) {
   if (!model) return "anthropic";
   if (model.startsWith("deepseek")) return "deepseek";
+  if (deepseekBaseURL && !deepseekBaseURL.includes("deepseek.com")) return "deepseek";
   return "anthropic";
 }
 

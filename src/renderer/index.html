@@ -198,6 +198,7 @@
           <select class="settings-input" id="settingsProvider">
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="deepseek">DeepSeek</option>
+            <option value="custom">自定义 (OpenAI 兼容)</option>
           </select>
           <div class="settings-hint">选择 AI 模型供应商</div>
         </div>
@@ -209,6 +210,11 @@
             <option value="https://api.deepseek.com">DeepSeek 官方</option>
           </select>
           <div class="settings-hint" id="baseUrlHint">中转站无需翻墙，官方线路需自备梯子</div>
+        </div>
+        <div class="settings-group" id="customBaseUrlGroup" style="display:none">
+          <label class="settings-label">API 地址</label>
+          <input class="settings-input" id="settingsCustomBaseUrl" type="text" placeholder="http://your-server:8317/v1" autocomplete="off" spellcheck="false">
+          <div class="settings-hint">OpenAI 兼容的 API 地址（如 CLIProxyAPI）</div>
         </div>
         <div class="settings-group">
           <label class="settings-label">模型</label>
@@ -225,8 +231,13 @@
               <option value="deepseek-chat">DeepSeek-V3 (deepseek-chat)</option>
               <option value="deepseek-reasoner">DeepSeek-R1 (deepseek-reasoner)</option>
             </optgroup>
+            <optgroup label="自定义" id="modelGroupCustom">
+              <option value="claude-opus-4-6">Claude Opus 4.6</option>
+              <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+            </optgroup>
           </select>
-          <div class="settings-hint">留空使用默认模型</div>
+          <div class="settings-hint" id="modelHint">留空使用默认模型</div>
         </div>
         <button class="settings-save" id="settingsSave">保存</button>
         <div class="settings-msg" id="settingsMsg"></div>

@@ -830,7 +830,7 @@ class ChatSession extends EventEmitter {
   async streamResponseRaw(abortSignal, requestedModel) {
     const settings = this.stores.settingsStore.get();
     const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
-    const provider = getProviderForModel(selectedModel);
+    const provider = getProviderForModel(selectedModel, settings.deepseekBaseURL);
     if (provider === "deepseek") {
       return this._streamDeepSeek(abortSignal, selectedModel);
     }

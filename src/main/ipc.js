@@ -100,7 +100,7 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     try {
       const settings = stores.settingsStore.get();
       const model = settings.model || "claude-sonnet-4-6";
-      const provider = getProviderForModel(model);
+      const provider = getProviderForModel(model, settings.deepseekBaseURL);
 
       if (provider === "deepseek") {
         const dsClient = createDeepSeekClient(stores.settingsStore);
