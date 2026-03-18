@@ -7,6 +7,7 @@ const { readCurrentBrowserContext } = require("../core/browser-companion-monitor
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
 const { createAnthropicClient } = require("../core/chat/anthropic-client");
 const { createDeepSeekClient } = require("../core/chat/deepseek-client");
+const { createKimiClient } = require("../core/chat/kimi-client");
 const { getProviderForModel } = require("../core/shared/constants");
 
 const QRCode = require("qrcode");
@@ -76,6 +77,8 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
       anthropicBaseURL: s.anthropicBaseURL || "",
       deepseekApiKey: mask(s.deepseekApiKey),
       deepseekBaseURL: s.deepseekBaseURL || "",
+      kimiApiKey: mask(s.kimiApiKey),
+      kimiBaseURL: s.kimiBaseURL || "",
       model: s.model || "",
       // legacy
       apiKey: mask(s.apiKey),
@@ -90,6 +93,8 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     if (patch.anthropicBaseURL !== undefined) update.anthropicBaseURL = patch.anthropicBaseURL.trim();
     if (patch.deepseekApiKey && !patch.deepseekApiKey.includes("...")) update.deepseekApiKey = patch.deepseekApiKey.replace(/\s+/g, "");
     if (patch.deepseekBaseURL !== undefined) update.deepseekBaseURL = patch.deepseekBaseURL.trim();
+    if (patch.kimiApiKey && !patch.kimiApiKey.includes("...")) update.kimiApiKey = patch.kimiApiKey.replace(/\s+/g, "");
+    if (patch.kimiBaseURL !== undefined) update.kimiBaseURL = patch.kimiBaseURL.trim();
     // Legacy fields (for backward compat)
     if (patch.apiKey && !patch.apiKey.includes("...")) update.apiKey = patch.apiKey.replace(/\s+/g, "");
     if (patch.baseURL !== undefined) update.baseURL = patch.baseURL.trim();
@@ -102,7 +107,14 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
       const model = settings.model || "claude-sonnet-4-6";
       const provider = getProviderForModel(model, settings.deepseekBaseURL);
 
-      if (provider === "deepseek") {
+      if (provider === "kimi") {
+        const kimiClient = createKimiClient(stores.settingsStore);
+        await kimiClient.chatComplete({
+          model,
+          messages: [{ role: "user", content: "hi" }],
+          max_tokens: 10,
+        });
+      } else if (provider === "deepseek") {
         const dsClient = createDeepSeekClient(stores.settingsStore);
         await dsClient.chatComplete({
           model,

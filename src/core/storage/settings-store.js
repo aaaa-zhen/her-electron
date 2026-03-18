@@ -41,6 +41,8 @@ class SettingsStore extends JsonFileStore {
       anthropicBaseURL: "https://www.packyapi.com",
       deepseekApiKey: "",
       deepseekBaseURL: "https://api.deepseek.com",
+      kimiApiKey: "",
+      kimiBaseURL: "https://api.moonshot.cn/v1",
       relationshipProfile: null,
       relationshipSetupCompleted: false,
       browserHistoryEnabled: true,
@@ -65,6 +67,8 @@ class SettingsStore extends JsonFileStore {
     if (patch.anthropicBaseURL !== undefined) next.anthropicBaseURL = patch.anthropicBaseURL;
     if (patch.deepseekApiKey !== undefined && patch.deepseekApiKey !== "") next.deepseekApiKey = patch.deepseekApiKey;
     if (patch.deepseekBaseURL !== undefined) next.deepseekBaseURL = patch.deepseekBaseURL;
+    if (patch.kimiApiKey !== undefined && patch.kimiApiKey !== "") next.kimiApiKey = patch.kimiApiKey;
+    if (patch.kimiBaseURL !== undefined) next.kimiBaseURL = patch.kimiBaseURL;
     if (patch.relationshipProfile !== undefined) next.relationshipProfile = patch.relationshipProfile;
     if (patch.relationshipSetupCompleted !== undefined) next.relationshipSetupCompleted = Boolean(patch.relationshipSetupCompleted);
     if (patch.browserHistoryEnabled !== undefined) next.browserHistoryEnabled = Boolean(patch.browserHistoryEnabled);

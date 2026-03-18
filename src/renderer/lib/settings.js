@@ -150,8 +150,9 @@ async function refreshPairUI() {
   } catch (_) {}
 }
 
-function detectProvider(model, baseURL, deepseekBaseURL) {
+function detectProvider(model, baseURL, deepseekBaseURL, kimiBaseURL) {
   if (model && model.startsWith("deepseek")) return "deepseek";
+  if (model && (model.startsWith("kimi") || model.startsWith("moonshot"))) return "kimi";
   if (baseURL && baseURL.includes("deepseek.com")) return "deepseek";
   if (deepseekBaseURL && !deepseekBaseURL.includes("deepseek.com")) return "custom";
   return "anthropic";
@@ -164,12 +165,15 @@ function syncProviderUI(provider) {
   const customBaseUrlGroup = document.getElementById("customBaseUrlGroup");
   const modelGroupAnthropic = document.getElementById("modelGroupAnthropic");
   const modelGroupDeepSeek = document.getElementById("modelGroupDeepSeek");
+  const modelGroupKimi = document.getElementById("modelGroupKimi");
   const modelGroupCustom = document.getElementById("modelGroupCustom");
 
   // Save current base URL to the correct slot before switching
   const prev = baseUrlSelect.dataset.currentProvider || "";
   if (prev === "deepseek") {
     baseUrlSelect.dataset.deepseekUrl = baseUrlSelect.value;
+  } else if (prev === "kimi") {
+    baseUrlSelect.dataset.kimiUrl = baseUrlSelect.value;
   } else if (prev === "custom") {
     // custom uses its own input
   } else if (prev) {
@@ -182,10 +186,27 @@ function syncProviderUI(provider) {
     customBaseUrlGroup.style.display = "";
     modelGroupAnthropic.hidden = true;
     modelGroupDeepSeek.hidden = true;
+    modelGroupKimi.hidden = true;
     modelGroupCustom.hidden = false;
     const modelSelect = document.getElementById("settingsModel");
-    if (modelSelect.value.startsWith("deepseek")) {
+    if (modelSelect.value.startsWith("deepseek") || modelSelect.value.startsWith("kimi") || modelSelect.value.startsWith("moonshot")) {
       modelSelect.value = "claude-opus-4-6";
+    }
+  } else if (provider === "kimi") {
+    baseUrlGroup.style.display = "";
+    customBaseUrlGroup.style.display = "none";
+    for (const opt of baseUrlSelect.options) {
+      opt.hidden = !opt.value.includes("moonshot.cn");
+    }
+    baseUrlSelect.value = baseUrlSelect.dataset.kimiUrl || "https://api.moonshot.cn/v1";
+    baseUrlHint.textContent = "Kimi 官方 API (月之暗面)";
+    modelGroupAnthropic.hidden = true;
+    modelGroupDeepSeek.hidden = true;
+    modelGroupKimi.hidden = false;
+    modelGroupCustom.hidden = true;
+    const modelSelect = document.getElementById("settingsModel");
+    if (!modelSelect.value.startsWith("kimi") && !modelSelect.value.startsWith("moonshot")) {
+      modelSelect.value = "kimi-latest";
     }
   } else if (provider === "deepseek") {
     baseUrlGroup.style.display = "";
@@ -197,6 +218,7 @@ function syncProviderUI(provider) {
     baseUrlHint.textContent = "DeepSeek 官方 API";
     modelGroupAnthropic.hidden = true;
     modelGroupDeepSeek.hidden = false;
+    modelGroupKimi.hidden = true;
     modelGroupCustom.hidden = true;
     const modelSelect = document.getElementById("settingsModel");
     if (!modelSelect.value.startsWith("deepseek")) {
@@ -206,15 +228,16 @@ function syncProviderUI(provider) {
     baseUrlGroup.style.display = "";
     customBaseUrlGroup.style.display = "none";
     for (const opt of baseUrlSelect.options) {
-      opt.hidden = opt.value.includes("deepseek.com");
+      opt.hidden = opt.value.includes("deepseek.com") || opt.value.includes("moonshot.cn");
     }
     baseUrlSelect.value = baseUrlSelect.dataset.anthropicUrl || "https://www.packyapi.com";
     baseUrlHint.textContent = "中转站无需翻墙，官方线路需自备梯子";
     modelGroupAnthropic.hidden = false;
     modelGroupDeepSeek.hidden = true;
+    modelGroupKimi.hidden = true;
     modelGroupCustom.hidden = true;
     const modelSelect = document.getElementById("settingsModel");
-    if (modelSelect.value.startsWith("deepseek")) {
+    if (modelSelect.value.startsWith("deepseek") || modelSelect.value.startsWith("kimi") || modelSelect.value.startsWith("moonshot")) {
       modelSelect.value = "";
     }
   }
@@ -231,6 +254,8 @@ function initSettingsPanel() {
     const prev = e.target._prevProvider || "anthropic";
     if (prev === "deepseek") {
       apiKeyInput.dataset.deepseekKey = apiKeyInput.value;
+    } else if (prev === "kimi") {
+      apiKeyInput.dataset.kimiKey = apiKeyInput.value;
     } else if (prev === "custom") {
       apiKeyInput.dataset.customKey = apiKeyInput.value;
     } else {
@@ -240,6 +265,8 @@ function initSettingsPanel() {
     // Show new provider's key
     if (e.target.value === "deepseek") {
       apiKeyInput.value = apiKeyInput.dataset.deepseekKey || "";
+    } else if (e.target.value === "kimi") {
+      apiKeyInput.value = apiKeyInput.dataset.kimiKey || "";
     } else if (e.target.value === "custom") {
       apiKeyInput.value = apiKeyInput.dataset.customKey || "";
     } else {
@@ -253,7 +280,7 @@ function initSettingsPanel() {
       const s = await window.herAPI.getSettings();
 
       // Detect provider from saved model
-      const provider = detectProvider(s.model, s.anthropicBaseURL || s.baseURL, s.deepseekBaseURL);
+      const provider = detectProvider(s.model, s.anthropicBaseURL || s.baseURL, s.deepseekBaseURL, s.kimiBaseURL);
       providerSelect.value = provider;
       providerSelect._prevProvider = provider;
       syncProviderUI(provider);
@@ -261,10 +288,13 @@ function initSettingsPanel() {
       // Store per-provider keys in data attributes
       apiKeyInput.dataset.anthropicKey = s.anthropicApiKey || s.apiKey || "";
       apiKeyInput.dataset.deepseekKey = s.deepseekApiKey || "";
+      apiKeyInput.dataset.kimiKey = s.kimiApiKey || "";
       apiKeyInput.dataset.customKey = s.customApiKey || "";
       // Show active provider's key
       if (provider === "deepseek") {
         apiKeyInput.value = apiKeyInput.dataset.deepseekKey;
+      } else if (provider === "kimi") {
+        apiKeyInput.value = apiKeyInput.dataset.kimiKey;
       } else if (provider === "custom") {
         apiKeyInput.value = apiKeyInput.dataset.customKey;
         document.getElementById("settingsCustomBaseUrl").value = s.deepseekBaseURL || "";
@@ -276,14 +306,19 @@ function initSettingsPanel() {
       const baseUrlSelect = document.getElementById("settingsBaseUrl");
       baseUrlSelect.dataset.anthropicUrl = s.anthropicBaseURL || s.baseURL || "https://www.packyapi.com";
       baseUrlSelect.dataset.deepseekUrl = s.deepseekBaseURL || "https://api.deepseek.com";
+      baseUrlSelect.dataset.kimiUrl = s.kimiBaseURL || "https://api.moonshot.cn/v1";
       baseUrlSelect.dataset.currentProvider = provider;
       if (provider === "deepseek") {
         baseUrlSelect.value = baseUrlSelect.dataset.deepseekUrl;
+      } else if (provider === "kimi") {
+        baseUrlSelect.value = baseUrlSelect.dataset.kimiUrl;
       } else if (provider !== "custom") {
         baseUrlSelect.value = baseUrlSelect.dataset.anthropicUrl;
       }
       if (!baseUrlSelect.value && provider !== "custom") {
-        baseUrlSelect.value = provider === "deepseek" ? "https://api.deepseek.com" : "https://www.packyapi.com";
+        if (provider === "deepseek") baseUrlSelect.value = "https://api.deepseek.com";
+        else if (provider === "kimi") baseUrlSelect.value = "https://api.moonshot.cn/v1";
+        else baseUrlSelect.value = "https://www.packyapi.com";
       }
       document.getElementById("settingsModel").value = s.model || "";
       document.getElementById("settingsMsg").textContent = "";
@@ -323,6 +358,8 @@ function initSettingsPanel() {
       const currentProvider = providerSelect.value;
       if (currentProvider === "deepseek") {
         apiKeyInput.dataset.deepseekKey = apiKeyInput.value;
+      } else if (currentProvider === "kimi") {
+        apiKeyInput.dataset.kimiKey = apiKeyInput.value;
       } else if (currentProvider === "custom") {
         apiKeyInput.dataset.customKey = apiKeyInput.value;
       } else {
@@ -338,9 +375,11 @@ function initSettingsPanel() {
       // Send per-provider keys (only if not masked)
       const aKey = (apiKeyInput.dataset.anthropicKey || "").trim();
       const dKey = (apiKeyInput.dataset.deepseekKey || "").trim();
+      const kKey = (apiKeyInput.dataset.kimiKey || "").trim();
       const cKey = (apiKeyInput.dataset.customKey || "").trim();
       if (aKey && !aKey.includes("...")) payload.anthropicApiKey = aKey;
       if (dKey && !dKey.includes("...")) payload.deepseekApiKey = dKey;
+      if (kKey && !kKey.includes("...")) payload.kimiApiKey = kKey;
 
       // Save current base URL to the right slot, and send both
       if (currentProvider === "custom") {
@@ -348,14 +387,22 @@ function initSettingsPanel() {
         payload.deepseekBaseURL = customUrl;
         payload.deepseekApiKey = cKey || "dummy";
         payload.anthropicBaseURL = baseUrlSelect.dataset.anthropicUrl || "";
+        payload.kimiBaseURL = baseUrlSelect.dataset.kimiUrl || "";
+      } else if (currentProvider === "kimi") {
+        baseUrlSelect.dataset.kimiUrl = baseURL;
+        payload.kimiBaseURL = baseURL;
+        payload.anthropicBaseURL = baseUrlSelect.dataset.anthropicUrl || "";
+        payload.deepseekBaseURL = baseUrlSelect.dataset.deepseekUrl || "";
       } else if (currentProvider === "deepseek") {
         baseUrlSelect.dataset.deepseekUrl = baseURL;
         payload.deepseekBaseURL = baseURL;
         payload.anthropicBaseURL = baseUrlSelect.dataset.anthropicUrl || "";
+        payload.kimiBaseURL = baseUrlSelect.dataset.kimiUrl || "";
       } else {
         baseUrlSelect.dataset.anthropicUrl = baseURL;
         payload.anthropicBaseURL = baseURL;
         payload.deepseekBaseURL = baseUrlSelect.dataset.deepseekUrl || "";
+        payload.kimiBaseURL = baseUrlSelect.dataset.kimiUrl || "";
       }
 
       const result = await window.herAPI.saveSettings(payload);

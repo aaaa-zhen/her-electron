@@ -10,6 +10,12 @@ const DEEPSEEK_OUTPUT_COST_PER_TOKEN = 2 / 1_000_000;   // ¥2/M ≈ $0.28/M
 
 const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"];
 
+// Kimi pricing (CNY per million tokens, converted to approximate USD)
+const KIMI_INPUT_COST_PER_TOKEN = 1 / 1_000_000;
+const KIMI_OUTPUT_COST_PER_TOKEN = 3 / 1_000_000;
+
+const KIMI_MODELS = ["kimi-latest", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-auto"];
+
 /**
  * Detect provider from model name and optional base URL.
  * When deepseekBaseURL points to a non-DeepSeek endpoint (e.g. CLIProxyAPI),
@@ -18,6 +24,7 @@ const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"];
 function getProviderForModel(model, deepseekBaseURL) {
   if (!model) return "anthropic";
   if (model.startsWith("deepseek")) return "deepseek";
+  if (model.startsWith("kimi") || model.startsWith("moonshot")) return "kimi";
   if (deepseekBaseURL && !deepseekBaseURL.includes("deepseek.com")) return "deepseek";
   return "anthropic";
 }
@@ -30,5 +37,8 @@ module.exports = {
   DEEPSEEK_INPUT_COST_PER_TOKEN,
   DEEPSEEK_OUTPUT_COST_PER_TOKEN,
   DEEPSEEK_MODELS,
+  KIMI_INPUT_COST_PER_TOKEN,
+  KIMI_OUTPUT_COST_PER_TOKEN,
+  KIMI_MODELS,
   getProviderForModel,
 };
