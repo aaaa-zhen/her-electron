@@ -82,15 +82,6 @@ function normalizePassiveContext(context) {
     calendar: Array.isArray(context && context.calendar) ? context.calendar : [],
     clipboard: typeof (context && context.clipboard) === "string" ? context.clipboard : "",
     frontApp: typeof (context && context.frontApp) === "string" ? context.frontApp : "",
-    currentPage: context && context.currentPage && typeof context.currentPage === "object" ? {
-      title: typeof context.currentPage.title === "string" ? context.currentPage.title : "",
-      url: typeof context.currentPage.url === "string" ? context.currentPage.url : "",
-      description: typeof context.currentPage.description === "string" ? context.currentPage.description : "",
-      snippet: typeof context.currentPage.snippet === "string" ? context.currentPage.snippet : "",
-      domainLabel: typeof context.currentPage.domainLabel === "string" ? context.currentPage.domainLabel : "",
-      kind: typeof context.currentPage.kind === "string" ? context.currentPage.kind : "",
-      appName: typeof context.currentPage.appName === "string" ? context.currentPage.appName : "",
-    } : null,
   };
 }
 
@@ -134,147 +125,33 @@ function loadHomeProfile() {
   window.herAPI.getProfile().catch(() => null).then((profileData) => updateHomeProfile(profileData));
 }
 
-function updateHomeBrowserDigest(digestData) {
-  const el = document.getElementById("home-browser-digest");
-  if (!el) return;
-  digestData = digestData || { summary: "", topThreads: [], topDomains: [], lastError: "", lastImportedAt: null };
-  if (digestData.lastError && !digestData.summary) {
-    el.innerHTML = `<div class="browser-digest-card compact"><div class="browser-digest-summary">浏览历史暂时还没读到：${esc(digestData.lastError)}</div></div>`;
-    return;
-  }
-  if (!digestData.summary) {
-    el.innerHTML = '<div class="todo-empty">还没形成浏览摘要。等 Her 跑完第一次 nightly evolution，这里会开始显示你最近在关注什么。</div>';
-    return;
-  }
-  const threadChips = (digestData.topThreads || []).slice(0, 4).map((item) => `<span class="browser-digest-chip">${esc(item)}</span>`).join("");
-  const domainText = (digestData.topDomains || []).slice(0, 4).join(" · ");
-  el.innerHTML = `
-    <div class="browser-digest-card">
-      <div class="browser-digest-summary">${esc(digestData.summary)}</div>
-      ${threadChips ? `<div class="browser-digest-chips">${threadChips}</div>` : ""}
-      ${domainText ? `<div class="browser-digest-meta">主要来源：${esc(domainText)}</div>` : ""}
-    </div>
-  `;
-}
-
-function loadHomeBrowserDigest() {
-  window.herAPI.getBrowserDigest().catch(() => null).then((digestData) => updateHomeBrowserDigest(digestData));
-}
 
 function updateHomeTodos(todos) {
   const el = document.getElementById("home-todos");
+  const section = document.getElementById("home-todos-section");
   if (!el) return;
   todos = todos || [];
-  el.innerHTML = todos.length === 0
-    ? '<div class="todo-empty">暂无待办</div>'
-    : todos.slice(0, 8).map((t) => `
-      <div class="todo-item">
-        <div class="todo-check"><svg><use href="#i-clock"/></svg></div>
-        <div class="todo-content">
-          <span class="todo-title">${esc(t.title)}</span>
-          ${t.dueDate ? `<span class="todo-due">${esc(formatDueDate(t.dueDate))}</span>` : ""}
-          ${t.detail ? `<span class="todo-detail">${esc(t.detail)}</span>` : ""}
-        </div>
+  if (todos.length === 0) {
+    if (section) section.style.display = "none";
+    return;
+  }
+  if (section) section.style.display = "";
+  el.innerHTML = todos.slice(0, 8).map((t) => `
+    <div class="todo-item">
+      <div class="todo-check"><svg><use href="#i-clock"/></svg></div>
+      <div class="todo-content">
+        <span class="todo-title">${esc(t.title)}</span>
+        ${t.dueDate ? `<span class="todo-due">${esc(formatDueDate(t.dueDate))}</span>` : ""}
+        ${t.detail ? `<span class="todo-detail">${esc(t.detail)}</span>` : ""}
       </div>
-    `).join("");
+    </div>
+  `).join("");
 }
 
 function loadHomeTodos() {
   window.herAPI.getTodos().catch(() => []).then((todos) => updateHomeTodos(todos));
 }
 
-function loadHomeNewsBriefing() {
-  const section = document.getElementById("home-briefing-section");
-  if (!section) return;
-  window.herAPI.getNewsBriefing().catch(() => null).then((config) => renderNewsBriefingCard(section, config));
-}
-
-function renderNewsBriefingCard(section, config) {
-  const enabled = config && config.enabled;
-  if (!enabled) {
-    section.innerHTML = "";
-    section.style.display = "none";
-    return;
-  }
-  section.style.display = "";
-  const hour = (config && config.hour) || 9;
-  const minute = (config && config.minute) || 0;
-  const timeStr = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-  const HOUR_OPTIONS = [7, 8, 9, 10, 11];
-  const hourChips = HOUR_OPTIONS.map((h) => `<button class="briefing-hour${h === hour ? " active" : ""}" data-h="${h}">${String(h).padStart(2, "0")}:00</button>`).join("");
-
-  if (enabled) {
-    section.innerHTML = `
-      <div class="presence-section-title"><svg><use href="#i-globe"/></svg>每日早报</div>
-      <div class="briefing-card">
-        <div class="briefing-status-row"><div class="briefing-status-dot"></div>
-          <div class="briefing-status-text">
-            <span class="briefing-status-on">已开启 · 每个工作日 ${timeStr}</span>
-            <span class="briefing-desc">Her 会根据对你的了解自动推送新闻</span>
-          </div>
-        </div>
-        <div class="briefing-hours">${hourChips}</div>
-        <div class="briefing-actions">
-          <button class="briefing-now" id="briefing-now">现在就来一份</button>
-          <button class="briefing-off" id="briefing-off">关闭早报</button>
-        </div>
-      </div>
-    `;
-  } else {
-    section.innerHTML = `
-      <div class="presence-section-title"><svg><use href="#i-globe"/></svg>每日早报</div>
-      <div class="briefing-card briefing-card--off">
-        <div class="briefing-pitch">
-          <div class="briefing-pitch-text">
-            <span class="briefing-pitch-title">让 Her 每天早上给你一份新闻</span>
-            <span class="briefing-desc">不用选行业 — Her 已经知道你关注什么</span>
-          </div>
-        </div>
-        <div class="briefing-hours">${hourChips}</div>
-        <div class="briefing-actions">
-          <button class="briefing-save" id="briefing-save">开启早报</button>
-          <button class="briefing-now" id="briefing-now">先试一份</button>
-        </div>
-      </div>
-    `;
-  }
-
-  let selectedHour = hour;
-  section.querySelectorAll(".briefing-hour").forEach((chip) => {
-    chip.addEventListener("click", async () => {
-      section.querySelectorAll(".briefing-hour").forEach((c) => c.classList.remove("active"));
-      chip.classList.add("active");
-      selectedHour = parseInt(chip.dataset.h, 10);
-      if (enabled) {
-        await window.herAPI.saveNewsBriefing({ enabled: true, hour: selectedHour, minute: 0 });
-        toast(`早报时间已更新为 ${String(selectedHour).padStart(2, "0")}:00`);
-        loadHomeNewsBriefing();
-      }
-    });
-  });
-
-  const saveBtn = section.querySelector("#briefing-save");
-  if (saveBtn) {
-    saveBtn.addEventListener("click", async () => {
-      await window.herAPI.saveNewsBriefing({ enabled: true, hour: selectedHour, minute: 0 });
-      toast(`早报已开启：每个工作日 ${String(selectedHour).padStart(2, "0")}:00`);
-      loadHomeNewsBriefing();
-    });
-  }
-
-  const offBtn = section.querySelector("#briefing-off");
-  if (offBtn) {
-    offBtn.addEventListener("click", async () => {
-      await window.herAPI.saveNewsBriefing({ enabled: false, hour: 9, minute: 0 });
-      toast("早报已关闭");
-      loadHomeNewsBriefing();
-    });
-  }
-
-  section.querySelector("#briefing-now").addEventListener("click", () => {
-    send("给我来一份今天的新闻早报，根据你对我的了解搜我会感兴趣的内容，图文并茂展示，最后简短总结。");
-  });
-}
 
 function fillHomeCalendar(calendar) {
   const el = document.getElementById("home-calendar");

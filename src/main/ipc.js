@@ -1,20 +1,12 @@
-const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { ipcMain, clipboard, shell, app } = require("electron");
 const { safePath, toFileUrl } = require("../core/tools/helpers");
-const { readCurrentBrowserContext } = require("../core/browser-companion-monitor");
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
-const { createAnthropicClient } = require("../core/chat/anthropic-client");
-const { createDeepSeekClient } = require("../core/chat/deepseek-client");
-const { createKimiClient } = require("../core/chat/kimi-client");
-const { getProviderForModel } = require("../core/shared/constants");
+const { createClient } = require("../core/chat/anthropic-client");
 
-const QRCode = require("qrcode");
-const DEFAULT_RELAY_URL = "ws://43.134.52.155:3939";
-
-function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) {
-  let contextCache = { calendar: [], clipboard: "", frontApp: "", currentPage: null };
+function registerIpc({ session, getMainWindow, paths, stores }) {
+  let contextCache = { calendar: [], clipboard: "", frontApp: "" };
   let contextCacheUpdatedAt = 0;
   let contextRefreshPromise = null;
 
@@ -24,10 +16,9 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     if (!force && now - contextCacheUpdatedAt < 15000 && contextCacheUpdatedAt !== 0) return contextCache;
 
     contextRefreshPromise = (async () => {
-      const [frontApp, calendar, currentPage] = await Promise.all([
+      const [frontApp, calendar] = await Promise.all([
         readFrontApp(),
         readCalendarEvents(),
-        readCurrentBrowserContext().catch(() => null),
       ]);
       let clipboardText = "";
       try {
@@ -39,7 +30,6 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
         calendar,
         clipboard: clipboardText,
         frontApp,
-        currentPage,
       };
       contextCacheUpdatedAt = Date.now();
       return contextCache;
@@ -73,30 +63,20 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     const s = stores.settingsStore.get();
     const mask = (k) => k ? `${k.slice(0, 6)}...${k.slice(-4)}` : "";
     return {
-      anthropicApiKey: mask(s.anthropicApiKey),
-      anthropicBaseURL: s.anthropicBaseURL || "",
-      deepseekApiKey: mask(s.deepseekApiKey),
-      deepseekBaseURL: s.deepseekBaseURL || "",
-      kimiApiKey: mask(s.kimiApiKey),
-      kimiBaseURL: s.kimiBaseURL || "",
-      model: s.model || "",
-      // legacy
       apiKey: mask(s.apiKey),
       baseURL: s.baseURL || "",
+      model: s.model || "",
     };
   });
 
   ipcMain.handle("her:save-settings", async (_event, patch) => {
     const update = {};
-    // Per-provider keys
-    if (patch.anthropicApiKey && !patch.anthropicApiKey.includes("...")) update.anthropicApiKey = patch.anthropicApiKey.replace(/\s+/g, "");
-    if (patch.anthropicBaseURL !== undefined) update.anthropicBaseURL = patch.anthropicBaseURL.trim();
-    if (patch.deepseekApiKey && !patch.deepseekApiKey.includes("...")) update.deepseekApiKey = patch.deepseekApiKey.replace(/\s+/g, "");
-    if (patch.deepseekBaseURL !== undefined) update.deepseekBaseURL = patch.deepseekBaseURL.trim();
-    if (patch.kimiApiKey && !patch.kimiApiKey.includes("...")) update.kimiApiKey = patch.kimiApiKey.replace(/\s+/g, "");
-    if (patch.kimiBaseURL !== undefined) update.kimiBaseURL = patch.kimiBaseURL.trim();
-    // Legacy fields (for backward compat)
-    if (patch.apiKey && !patch.apiKey.includes("...")) update.apiKey = patch.apiKey.replace(/\s+/g, "");
+    // API Key: "__clear__" means user cleared the field → reset to use built-in default
+    if (patch.apiKey === "__clear__") {
+      update.apiKey = "";
+    } else if (patch.apiKey && !patch.apiKey.includes("...")) {
+      update.apiKey = patch.apiKey.replace(/\s+/g, "");
+    }
     if (patch.baseURL !== undefined) update.baseURL = patch.baseURL.trim();
     if (patch.model !== undefined) update.model = patch.model.trim();
     stores.settingsStore.update(update);
@@ -104,31 +84,13 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     // Test API connectivity after saving
     try {
       const settings = stores.settingsStore.get();
-      const model = settings.model || "claude-sonnet-4-6";
-      const provider = getProviderForModel(model, settings.deepseekBaseURL);
-
-      if (provider === "kimi") {
-        const kimiClient = createKimiClient(stores.settingsStore);
-        await kimiClient.chatComplete({
-          model,
-          messages: [{ role: "user", content: "hi" }],
-          max_tokens: 10,
-        });
-      } else if (provider === "deepseek") {
-        const dsClient = createDeepSeekClient(stores.settingsStore);
-        await dsClient.chatComplete({
-          model,
-          messages: [{ role: "user", content: "hi" }],
-          max_tokens: 10,
-        });
-      } else {
-        const client = createAnthropicClient(stores.settingsStore);
-        await client.messages.create({
-          model,
-          max_tokens: 10,
-          messages: [{ role: "user", content: "hi" }],
-        });
-      }
+      const model = settings.model || require("../core/shared/constants").DEFAULT_MODEL;
+      const client = createClient(stores.settingsStore);
+      await client.chat.completions.create({
+        model,
+        max_tokens: 10,
+        messages: [{ role: "user", content: "hi" }],
+      });
       return { ok: true, connected: true };
     } catch (err) {
       const msg = err.message || String(err);
@@ -136,16 +98,6 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
     }
   });
 
-  ipcMain.handle("her:save-news-briefing", (_event, payload) => {
-    stores.settingsStore.update({ newsBriefing: payload || null });
-    // Emit event so main process can re-setup cron
-    session.emit("event", { type: "news_briefing_updated" });
-    return stores.settingsStore.get().newsBriefing;
-  });
-
-  ipcMain.handle("her:get-news-briefing", () => {
-    return stores.settingsStore.get().newsBriefing;
-  });
 
   ipcMain.on("her:send-message", (_event, payload) => {
     session.sendMessage(payload);
@@ -215,159 +167,6 @@ function registerIpc({ session, getMainWindow, paths, stores, getDeviceAgent }) 
   ipcMain.handle("her:get-profile", () => {
     if (stores && stores.profileStore) return stores.profileStore.getHomeData();
     return { score: 0, totalObservations: 0, firstSeen: null, topTraits: [] };
-  });
-
-  ipcMain.handle("her:get-browser-digest", () => {
-    if (stores && stores.browserHistoryStore) return stores.browserHistoryStore.getHomeData();
-    return { lastImportedAt: null, lastError: "", summary: "", topThreads: [], topDomains: [], sources: [] };
-  });
-
-  ipcMain.handle("her:get-remote-config", () => {
-    const settings = stores && stores.settingsStore ? stores.settingsStore.get() : {};
-    return {
-      remoteAgentEnabled: Boolean(settings.remoteAgentEnabled),
-      remoteRelayUrl: settings.remoteRelayUrl || "",
-      remoteDeviceToken: settings.remoteDeviceToken || "",
-    };
-  });
-
-  ipcMain.handle("her:save-remote-config", (_event, payload) => {
-    if (!stores || !stores.settingsStore) throw new Error("Settings store unavailable");
-    const next = stores.settingsStore.update({
-      remoteAgentEnabled: payload && payload.remoteAgentEnabled,
-      remoteRelayUrl: payload && payload.remoteRelayUrl,
-      remoteDeviceToken: payload && payload.remoteDeviceToken,
-    });
-    return {
-      remoteAgentEnabled: Boolean(next.remoteAgentEnabled),
-      remoteRelayUrl: next.remoteRelayUrl || "",
-      remoteDeviceToken: next.remoteDeviceToken || "",
-    };
-  });
-
-  // ── Pairing: generate token pair, register with relay, return QR data ──
-
-  ipcMain.handle("her:generate-pair", async (_event, payload) => {
-    const relayBase = (payload && payload.relayUrl) || DEFAULT_RELAY_URL;
-    const httpBase = relayBase.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-    const agentToken = crypto.randomBytes(32).toString("hex");
-    const clientToken = crypto.randomBytes(32).toString("hex");
-
-    // Register with relay server
-    const { net } = require("electron");
-    const res = await net.fetch(`${httpBase}/api/pair`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentToken, clientToken }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Relay registration failed: ${res.status} ${text}`);
-    }
-    const result = await res.json();
-
-    // Save to settings and auto-enable
-    const os = require("os");
-    stores.settingsStore.update({
-      remoteAgentEnabled: true,
-      remoteRelayUrl: `${relayBase}/ws/agent`,
-      remoteDeviceToken: agentToken,
-      remoteClientToken: clientToken,
-      remotePairId: result.pairId,
-    });
-
-    // Restart DeviceAgent with new config
-    const agent = getDeviceAgent && getDeviceAgent();
-    if (agent) {
-      agent.stop();
-      agent.start();
-    }
-
-    const deviceName = os.hostname();
-    const qrPayload = JSON.stringify({
-      relay: `${relayBase}/ws/client`,
-      token: clientToken,
-      name: deviceName,
-    });
-    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
-      width: 240,
-      margin: 2,
-      color: { dark: "#000000", light: "#ffffff" },
-    });
-    return {
-      pairId: result.pairId,
-      qrData: qrPayload,
-      qrImage: qrDataUrl,
-      deviceName,
-      clientToken,
-    };
-  });
-
-  ipcMain.handle("her:revoke-pair", async () => {
-    const settings = stores.settingsStore.get();
-    const agentToken = settings.remoteDeviceToken;
-    if (!agentToken) return { ok: true };
-
-    const relayUrl = settings.remoteRelayUrl || "";
-    const relayBase = relayUrl.replace(/\/ws\/agent$/, "");
-    const httpBase = relayBase.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-
-    // Stop agent first
-    const agent = getDeviceAgent && getDeviceAgent();
-    if (agent) agent.stop();
-
-    // Revoke on server (best effort)
-    try {
-      const { net } = require("electron");
-      await net.fetch(`${httpBase}/api/pair`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentToken }),
-      });
-    } catch (_) {}
-
-    stores.settingsStore.update({
-      remoteAgentEnabled: false,
-      remoteRelayUrl: "",
-      remoteDeviceToken: "",
-      remoteClientToken: "",
-      remotePairId: "",
-    });
-
-    return { ok: true };
-  });
-
-  ipcMain.handle("her:get-pair-status", () => {
-    const settings = stores.settingsStore.get();
-    const agent = getDeviceAgent && getDeviceAgent();
-    return {
-      paired: Boolean(settings.remotePairId),
-      pairId: settings.remotePairId || "",
-      connected: agent ? agent.getStatus().connected : false,
-      deviceName: require("os").hostname(),
-      relayUrl: settings.remoteRelayUrl || "",
-      clientToken: settings.remoteClientToken || "",
-    };
-  });
-
-  ipcMain.handle("her:get-iphone-qr", async () => {
-    const settings = stores.settingsStore.get();
-    if (!settings.remotePairId || !settings.remoteClientToken) {
-      throw new Error("请先生成连接码");
-    }
-    const relayWsUrl = settings.remoteRelayUrl || "";
-    // Convert ws://host:port/ws/agent → http://host:port
-    const relayBase = relayWsUrl
-      .replace(/\/ws\/agent$/, "")
-      .replace(/^wss:/, "https:")
-      .replace(/^ws:/, "http:");
-    const shortcutsUrl = `${relayBase}/shortcuts?token=${encodeURIComponent(settings.remoteClientToken)}`;
-    const qrDataUrl = await QRCode.toDataURL(shortcutsUrl, {
-      width: 240,
-      margin: 2,
-      color: { dark: "#000000", light: "#ffffff" },
-    });
-    return { qrImage: qrDataUrl, url: shortcutsUrl };
   });
 
   // --- Update check ---

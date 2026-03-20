@@ -10,22 +10,18 @@ const { ScheduleStore } = require("../core/storage/schedule-store");
 const { TodoStore } = require("../core/storage/todo-store");
 const { ProfileStore } = require("../core/storage/profile-store");
 const { StateStore } = require("../core/storage/state-store");
-const { BrowserHistoryStore } = require("../core/storage/browser-history-store");
-const { SkillStore } = require("../core/storage/skill-store");
+
+
 const { SummaryDagStore } = require("../core/storage/summary-dag-store");
-const { createAnthropicClient } = require("../core/chat/anthropic-client");
+const { createClient, createAnthropicClient } = require("../core/chat/anthropic-client");
 const { ScheduleService } = require("../core/chat/schedule-service");
 const { ContextMonitor } = require("../core/context-monitor");
 const { ChatSession } = require("../core/chat/chat-session");
-const { BrowserCompanionMonitor } = require("../core/browser-companion-monitor");
-const { BrowserHistoryEvolutionService } = require("../core/browser-history-evolution");
 const { EnvironmentMonitor } = require("../core/environment-monitor");
 const { AwarenessService } = require("../core/awareness-service");
 const { execAsync } = require("../core/tools/process-utils");
 const { readFrontApp, readCalendarEvents } = require("./context-reader");
-const { DeviceAgent } = require("../core/remote/device-agent");
-const { RemoteDispatch } = require("../core/remote/remote-dispatch");
-const { readCurrentBrowserContext } = require("../core/browser-companion-monitor");
+
 
 app.setName("Her");
 
@@ -59,19 +55,16 @@ if (!gotLock) {
   process.exit(0);
 }
 
-const nodeCron = require("node-cron");
+
 
 let mainWindow = null;
 let tray = null;
 let chatSession = null;
 let scheduleService = null;
 let contextMonitor = null;
-let newsBriefingJob = null;
-let browserCompanionMonitor = null;
-let browserHistoryEvolutionService = null;
+
 let environmentMonitor = null;
 let awarenessService = null;
-let deviceAgent = null;
 let initialized = false;
 
 function dispatchReminderNotification(event) {
@@ -122,8 +115,6 @@ async function initializeApp() {
     todoStore: new TodoStore(paths.dataDir),
     profileStore: new ProfileStore(paths.dataDir),
     stateStore: new StateStore(paths.dataDir),
-    browserHistoryStore: new BrowserHistoryStore(paths.dataDir),
-    skillStore: new SkillStore(paths.dataDir),
     summaryDagStore: new SummaryDagStore(paths.dataDir),
   };
 
@@ -150,26 +141,6 @@ async function initializeApp() {
   });
   contextMonitor.start();
 
-  browserCompanionMonitor = new BrowserCompanionMonitor({
-    createAnthropicClient: () => createAnthropicClient(stores.settingsStore),
-  });
-  browserCompanionMonitor.on("offer", (event) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send("her:event", event);
-  });
-  browserCompanionMonitor.start();
-
-  browserHistoryEvolutionService = new BrowserHistoryEvolutionService({
-    paths,
-    stores,
-    createAnthropicClient: () => createAnthropicClient(stores.settingsStore),
-    emit: (event) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.webContents.send("her:event", event);
-    },
-  });
-  browserHistoryEvolutionService.start();
-
   environmentMonitor = new EnvironmentMonitor();
   environmentMonitor.start();
 
@@ -189,92 +160,15 @@ async function initializeApp() {
     awarenessService,
   });
 
-  chatSession.on("event", (event) => {
-    if (event && event.type === "news_briefing_updated") {
-      setupNewsBriefingCron(stores.settingsStore);
-    }
-  });
-
-  const getPassiveContext = async () => {
-    const [frontApp, calendar, currentPage] = await Promise.all([
-      readFrontApp(),
-      readCalendarEvents(),
-      readCurrentBrowserContext().catch(() => null),
-    ]);
-    return { frontApp, calendar, currentPage };
-  };
-
-  const remoteDispatch = new RemoteDispatch({
-    session: chatSession,
-    stores,
-    paths,
-    environmentMonitor,
-    getPassiveContext,
-  });
-
-  deviceAgent = new DeviceAgent({
-    settingsStore: stores.settingsStore,
-    dispatch: remoteDispatch,
-  });
-  deviceAgent.start();
-
   registerIpc({
     session: chatSession,
     getMainWindow: () => mainWindow,
     paths,
     stores,
-    getDeviceAgent: () => deviceAgent,
   });
 
-  // News briefing cron
-  setupNewsBriefingCron(stores.settingsStore);
 }
 
-function setupNewsBriefingCron(settingsStore) {
-  if (newsBriefingJob) { newsBriefingJob.stop(); newsBriefingJob = null; }
-
-  const config = settingsStore.get().newsBriefing;
-  if (!config || !config.enabled) return;
-
-  const hour = config.hour || 9;
-  const minute = config.minute || 0;
-  const cron = `${minute} ${hour} * * 1-5`; // weekdays only
-
-  newsBriefingJob = nodeCron.schedule(cron, () => {
-    triggerNewsBriefing();
-  });
-  console.log(`[NewsBriefing] Scheduled at ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} weekdays`);
-}
-
-function triggerNewsBriefing() {
-  if (!chatSession) return;
-
-  const prompt = `现在是早上，给我来一份今天的新闻早报。根据你对我的了解（我的职业、兴趣、最近关注的话题），搜我真正会感兴趣的新闻，图文并茂地展示，最后用几句话简短总结今天的重点。不要问我想看什么，你应该知道的。`;
-
-  if (Notification.isSupported()) {
-    const notification = new Notification({
-      title: "Her · 早报",
-      body: "正在为你整理今天的新闻...",
-      silent: false,
-    });
-    notification.on("click", () => {
-      ensureWindow();
-      mainWindow.show();
-      mainWindow.focus();
-    });
-    notification.show();
-  }
-
-  ensureWindow();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.webContents.send("her:event", { type: "clear" });
-  }
-
-  setTimeout(() => {
-    chatSession.sendMessage({ message: prompt, images: [] });
-  }, 500);
-}
 
 function ensureWindow() {
   if (mainWindow) return;
@@ -436,10 +330,6 @@ app.on("before-quit", () => {
   if (chatSession) chatSession.destroy();
   if (scheduleService) scheduleService.stop();
   if (contextMonitor) contextMonitor.stop();
-  if (browserCompanionMonitor) browserCompanionMonitor.stop();
-  if (browserHistoryEvolutionService) browserHistoryEvolutionService.stop();
   if (environmentMonitor) environmentMonitor.stop();
   if (awarenessService) awarenessService.stop();
-  if (deviceAgent) deviceAgent.stop();
-  if (newsBriefingJob) newsBriefingJob.stop();
 });

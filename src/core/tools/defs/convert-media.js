@@ -3,17 +3,27 @@ const path = require("path");
 const { BaseTool } = require("../base-tool");
 const { safePath, getFileType } = require("../helpers");
 
+function getFfmpegPath() {
+  // Prefer bundled ffmpeg-static (works without system install)
+  try {
+    const staticPath = require("ffmpeg-static");
+    if (staticPath && fs.existsSync(staticPath)) return staticPath;
+  } catch (_) {}
+  // Fallback to system ffmpeg
+  return "ffmpeg";
+}
+
 class ConvertMediaTool extends BaseTool {
   get name() { return "convert_media"; }
   get timeout() { return 600000; }
-  get description() { return "Convert or process media files using ffmpeg."; }
+  get description() { return "Convert or process media files using ffmpeg (bundled, no install needed). Supports video/audio format conversion, trimming, resizing, extracting audio, etc."; }
   get input_schema() {
     return {
       type: "object",
       properties: {
         input: { type: "string", description: "Input filename (in shared directory)" },
         output: { type: "string", description: "Output filename" },
-        options: { type: "string", description: "ffmpeg options between input and output" },
+        options: { type: "string", description: "ffmpeg options between input and output, e.g. '-ss 00:01:00 -t 30' to trim" },
       },
       required: ["input", "output"],
     };
@@ -26,7 +36,8 @@ class ConvertMediaTool extends BaseTool {
     if (!inputPath || !outputPath) return { content: "Invalid file path", is_error: true };
     if (!fs.existsSync(inputPath)) return { content: "Input file not found", is_error: true };
 
-    const command = `ffmpeg -y -i "${inputPath}" ${options} "${outputPath}"`;
+    const ffmpeg = getFfmpegPath();
+    const command = `"${ffmpeg}" -y -i "${inputPath}" ${options} "${outputPath}"`;
     ctx.emitCommand(command, "处理媒体", `${inputFile} -> ${outputFile}`);
     const promise = ctx.execAsync(command, { timeout: 600000, cwd: ctx.paths.sharedDir });
     if (promise.child) ctx.activeProcesses.push(promise.child);

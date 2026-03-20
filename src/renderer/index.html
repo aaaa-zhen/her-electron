@@ -162,7 +162,7 @@
     </div>
     <div class="input-hint">
       <span style="display:flex;align-items:center;gap:8px">
-        <span id="modelSelect" data-value="claude-sonnet-4-6" style="color:var(--text3);font-size:11px">Sonnet</span>
+        <span id="modelSelect" data-value="kimi-k2-turbo-preview" style="color:var(--text3);font-size:11px">Kimi K2</span>
       </span>
     </div>
     <div class="slash-menu" id="slashMenu">
@@ -184,6 +184,20 @@
       </div>
       <div class="settings-body">
         <div class="settings-group">
+          <label class="settings-label">API 服务商</label>
+          <select class="settings-input" id="settingsProvider">
+            <option value="kimi">Kimi (月之暗面) — 默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="custom">自定义 (OpenAI 兼容)</option>
+          </select>
+        </div>
+        <div class="settings-group" id="settingsBaseURLGroup" style="display:none">
+          <label class="settings-label">API 地址</label>
+          <input class="settings-input" id="settingsBaseURL" type="text" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false">
+          <div class="settings-hint">OpenAI 兼容接口的 Base URL</div>
+        </div>
+        <div class="settings-group">
           <label class="settings-label">API Key</label>
           <div style="position:relative">
             <input class="settings-input" id="settingsApiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" style="padding-right:40px">
@@ -191,90 +205,23 @@
               <svg id="eyeIcon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
             </button>
           </div>
-          <div class="settings-hint">用于连接 AI 模型的密钥，留空则不修改</div>
-        </div>
-        <div class="settings-group">
-          <label class="settings-label">AI 服务商</label>
-          <select class="settings-input" id="settingsProvider">
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="kimi">Kimi (月之暗面)</option>
-            <option value="custom">自定义 (OpenAI 兼容)</option>
-          </select>
-          <div class="settings-hint">选择 AI 模型供应商</div>
-        </div>
-        <div class="settings-group" id="baseUrlGroup">
-          <label class="settings-label">API 线路</label>
-          <select class="settings-input" id="settingsBaseUrl">
-            <option value="https://www.packyapi.com">中转站 · PackyAPI（免翻墙）</option>
-            <option value="https://api.anthropic.com">官方 API（需翻墙）</option>
-            <option value="https://api.deepseek.com">DeepSeek 官方</option>
-            <option value="https://api.moonshot.cn/v1">Kimi 官方 (Moonshot)</option>
-          </select>
-          <div class="settings-hint" id="baseUrlHint">中转站无需翻墙，官方线路需自备梯子</div>
-        </div>
-        <div class="settings-group" id="customBaseUrlGroup" style="display:none">
-          <label class="settings-label">API 地址</label>
-          <input class="settings-input" id="settingsCustomBaseUrl" type="text" placeholder="http://your-server:8317/v1" autocomplete="off" spellcheck="false">
-          <div class="settings-hint">OpenAI 兼容的 API 地址（如 CLIProxyAPI）</div>
+          <div class="settings-hint">留空使用内置密钥（仅 Kimi）</div>
         </div>
         <div class="settings-group">
           <label class="settings-label">模型</label>
-          <select class="settings-input" id="settingsModel">
-            <optgroup label="Anthropic (Claude)" id="modelGroupAnthropic">
-              <option value="">默认 (Claude Sonnet 4.6)</option>
-              <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-              <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-              <option value="claude-opus-4-6">Claude Opus 4.6</option>
-              <option value="claude-opus-4-20250514">Claude Opus 4</option>
-            </optgroup>
-            <optgroup label="DeepSeek" id="modelGroupDeepSeek">
-              <option value="deepseek-chat">DeepSeek-V3 (deepseek-chat)</option>
-              <option value="deepseek-reasoner">DeepSeek-R1 (deepseek-reasoner)</option>
-            </optgroup>
-            <optgroup label="Kimi (月之暗面)" id="modelGroupKimi">
-              <option value="kimi-latest">Kimi Latest (多模态)</option>
-              <option value="moonshot-v1-auto">Moonshot V1 Auto</option>
-              <option value="moonshot-v1-8k">Moonshot V1 8K</option>
-              <option value="moonshot-v1-32k">Moonshot V1 32K</option>
-              <option value="moonshot-v1-128k">Moonshot V1 128K</option>
-            </optgroup>
-            <optgroup label="自定义" id="modelGroupCustom">
-              <option value="claude-opus-4-6">Claude Opus 4.6</option>
-              <option value="claude-opus-4-5-20251101">Claude Opus 4.5</option>
-              <option value="claude-opus-4-1-20250805">Claude Opus 4.1</option>
-              <option value="claude-opus-4-20250514">Claude Opus 4</option>
-              <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-              <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
-              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-              <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-            </optgroup>
-          </select>
-          <div class="settings-hint" id="modelHint">留空使用默认模型</div>
+          <div id="settingsModelSelectWrap">
+            <select class="settings-input" id="settingsModel">
+              <option value="kimi-k2-turbo-preview">Kimi K2 Turbo · 快速、高性价比</option>
+              <option value="kimi-k2.5">Kimi K2.5 · 最强、更深度思考</option>
+            </select>
+          </div>
+          <div id="settingsModelInputWrap" style="display:none">
+            <input class="settings-input" id="settingsModelCustom" type="text" placeholder="模型名称，如 gpt-4o, claude-sonnet-4-20250514" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="settings-hint" id="settingsModelHint">留空使用默认模型</div>
         </div>
         <button class="settings-save" id="settingsSave">保存</button>
         <div class="settings-msg" id="settingsMsg"></div>
-
-        <div class="settings-divider"></div>
-        <div class="settings-group">
-          <label class="settings-label">手机连接</label>
-          <div class="settings-hint">扫码连接手机到此电脑</div>
-          <div id="pairSection">
-            <div id="pairUnpaired">
-              <button class="settings-save" id="pairGenerate" style="margin-top:8px">生成连接码</button>
-            </div>
-            <div id="pairPaired" style="display:none">
-              <div style="display:flex;gap:8px;margin-top:8px">
-                <button class="settings-save" id="pairShowAndroid" style="flex:1;font-size:12px;background:#333">Android</button>
-                <button class="settings-save" id="pairShowiPhone" style="flex:1;font-size:12px;background:#333">iPhone</button>
-              </div>
-              <div id="pairQrContainer" style="text-align:center;margin:12px 0"></div>
-              <div class="settings-hint" id="pairStatusText" style="text-align:center;margin-top:4px"></div>
-              <button class="settings-save" id="pairRevoke" style="margin-top:8px;background:#f87171">断开连接</button>
-            </div>
-          </div>
-        </div>
 
         <div class="settings-divider"></div>
         <div class="settings-group">

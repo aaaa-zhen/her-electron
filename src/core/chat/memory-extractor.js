@@ -316,9 +316,9 @@ async function extractAIMemories({ userText, assistantText, createAnthropicClien
   if (combined.length < 20) return [];
 
   try {
-    const anthropic = createAnthropicClient();
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+    const client = createAnthropicClient();
+    const response = await client.chat.completions.create({
+      model: require("../shared/constants").SUMMARY_MODEL,
       max_tokens: 1024,
       messages: [{ role: "user", content: `分析这段对话，提取需要长期记住的信息。只提取有价值的事实，忽略闲聊。
 
@@ -335,7 +335,7 @@ ${combined}
 - 只返回 JSON，不要其他文字` }],
     });
 
-    const text = response.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+    const text = (response.choices[0].message.content || "");
     const match = text.match(/\[[\s\S]*\]/);
     if (!match) return [];
     const items = JSON.parse(match[0]);

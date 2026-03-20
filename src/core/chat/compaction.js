@@ -13,22 +13,28 @@ function estimateTextTokens(text) {
 }
 
 function estimateTokens(message) {
-  if (!message || !message.content) return 0;
+  if (!message) return 0;
+  let tokens = 0;
   const { content } = message;
-  if (typeof content === "string") return estimateTextTokens(content);
-  if (Array.isArray(content)) {
-    return content.reduce((sum, block) => {
+  if (typeof content === "string") tokens += estimateTextTokens(content);
+  else if (Array.isArray(content)) {
+    tokens += content.reduce((sum, block) => {
       if (block.type === "text") return sum + estimateTextTokens(block.text || "");
-      if (block.type === "image") return sum + 1000;
-      if (block.type === "tool_use") return sum + estimateTextTokens(JSON.stringify(block.input || {})) + 20;
-      if (block.type === "tool_result") {
-        const contentText = typeof block.content === "string" ? block.content : JSON.stringify(block.content || "");
-        return sum + estimateTextTokens(contentText) + 10;
-      }
+      if (block.type === "image_url") return sum + 1000;
       return sum + 10;
     }, 0);
   }
-  return 10;
+  // OpenAI tool_calls on assistant messages
+  if (message.tool_calls && Array.isArray(message.tool_calls)) {
+    tokens += message.tool_calls.reduce((sum, tc) => {
+      return sum + estimateTextTokens(tc.function ? (tc.function.arguments || "") : "") + 20;
+    }, 0);
+  }
+  // OpenAI tool result messages
+  if (message.role === "tool" && typeof content === "string") {
+    tokens += 10;
+  }
+  return tokens || 10;
 }
 
 function estimateTotalTokens(messages) {
@@ -38,36 +44,41 @@ function estimateTotalTokens(messages) {
 /** Serialize messages into a readable text block for summarisation */
 function serializeMessages(messages) {
   return messages.map((message) => {
-    const role = message.role === "user" ? "User" : "Assistant";
-    if (typeof message.content === "string") return `${role}: ${message.content}`;
-    if (Array.isArray(message.content)) {
-      const parts = message.content.map((block) => {
-        if (block.type === "text") return block.text;
-        if (block.type === "tool_use") return `[Tool: ${block.name}(${JSON.stringify(block.input).slice(0, 200)})]`;
-        if (block.type === "tool_result") {
-          const text = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
-          return `[Result: ${text.slice(0, 200)}]`;
-        }
-        return "";
-      }).filter(Boolean);
-      return `${role}: ${parts.join("\n")}`;
+    if (message.role === "tool") {
+      const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+      return `Tool Result: ${text.slice(0, 200)}`;
     }
-    return `${role}: ${JSON.stringify(message.content).slice(0, 500)}`;
+    if (message.role === "system") return `System: ${typeof message.content === "string" ? message.content.slice(0, 300) : ""}`;
+    const role = message.role === "user" ? "User" : "Assistant";
+    const parts = [];
+    if (typeof message.content === "string") {
+      parts.push(message.content);
+    } else if (Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (block.type === "text") parts.push(block.text);
+      }
+    }
+    if (message.tool_calls && Array.isArray(message.tool_calls)) {
+      for (const tc of message.tool_calls) {
+        const fn = tc.function || {};
+        parts.push(`[Tool: ${fn.name}(${(fn.arguments || "").slice(0, 200)})]`);
+      }
+    }
+    return `${role}: ${parts.filter(Boolean).join("\n")}`;
   }).join("\n\n");
 }
 
 /** Call LLM to produce a summary */
-async function callSummarize(anthropic, text, prompt) {
-  const summaryResponse = await anthropic.messages.create({
+async function callSummarize(client, text, prompt) {
+  const summaryResponse = await client.chat.completions.create({
     model: SUMMARY_MODEL,
     max_tokens: 2048,
-    system: "You are a conversation summarizer. Respond ONLY with the summary in the exact format requested.",
-    messages: [{ role: "user", content: `${prompt}\n\n---\n${text.slice(0, 50000)}` }],
+    messages: [
+      { role: "system", content: "You are a conversation summarizer. Respond ONLY with the summary in the exact format requested." },
+      { role: "user", content: `${prompt}\n\n---\n${text.slice(0, 50000)}` },
+    ],
   });
-  return summaryResponse.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
+  return (summaryResponse.choices[0].message.content || "").trim();
 }
 
 /**
@@ -85,9 +96,15 @@ function findCutIndex(conversationHistory) {
     }
   }
 
-  // Ensure cut doesn't split a tool_use / tool_result pair.
+  // Ensure cut doesn't split a tool_calls / tool result sequence.
   while (cutIndex > 0 && cutIndex < conversationHistory.length) {
     const message = conversationHistory[cutIndex];
+    // Don't split on a tool result message
+    if (message.role === "tool") {
+      cutIndex -= 1;
+      continue;
+    }
+    // Legacy Anthropic format: user message with tool_result blocks
     if (message.role === "user" && Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result")) {
       cutIndex -= 1;
       continue;

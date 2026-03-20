@@ -125,205 +125,77 @@ function showOnboarding(onDone) {
   skip.addEventListener("click", () => { clearInterval(autoTimer); finish(); });
 }
 
-async function refreshPairUI() {
-  try {
-    const status = await window.herAPI.getPairStatus();
-    const unpaired = document.getElementById("pairUnpaired");
-    const paired = document.getElementById("pairPaired");
-    if (status.paired) {
-      unpaired.style.display = "none";
-      paired.style.display = "";
-      const statusText = document.getElementById("pairStatusText");
-      statusText.textContent = status.connected
-        ? `✓ 已连接 · ${status.deviceName}`
-        : `等待手机扫码连接…`;
-      statusText.style.color = status.connected ? "#4ade80" : "";
-      // Re-generate QR if no image shown yet
-      if (!paired.querySelector("img")) {
-        const qrContainer = document.getElementById("pairQrContainer");
-        qrContainer.innerHTML = `<div style="color:var(--text3);font-size:13px">已配对，重新生成请先断开</div>`;
-      }
-    } else {
-      unpaired.style.display = "";
-      paired.style.display = "none";
-    }
-  } catch (_) {}
-}
+const PROVIDER_PRESETS = {
+  kimi: { baseURL: "https://api.moonshot.cn/v1", models: [
+    { value: "kimi-k2-turbo-preview", label: "Kimi K2 Turbo · 快速、高性价比" },
+    { value: "kimi-k2.5", label: "Kimi K2.5 · 最强、更深度思考" },
+  ]},
+  openai: { baseURL: "https://api.openai.com/v1", models: [
+    { value: "gpt-4o", label: "GPT-4o" },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+    { value: "o3-mini", label: "o3-mini" },
+  ]},
+  deepseek: { baseURL: "https://api.deepseek.com/v1", models: [
+    { value: "deepseek-chat", label: "DeepSeek V3" },
+    { value: "deepseek-reasoner", label: "DeepSeek R1" },
+  ]},
+  custom: { baseURL: "", models: [] },
+};
 
-function detectProvider(model, baseURL, deepseekBaseURL, kimiBaseURL) {
-  if (model && model.startsWith("deepseek")) return "deepseek";
-  if (model && (model.startsWith("kimi") || model.startsWith("moonshot"))) return "kimi";
-  if (baseURL && baseURL.includes("deepseek.com")) return "deepseek";
-  if (deepseekBaseURL && !deepseekBaseURL.includes("deepseek.com")) return "custom";
-  return "anthropic";
-}
-
-function syncProviderUI(provider) {
-  const baseUrlSelect = document.getElementById("settingsBaseUrl");
-  const baseUrlHint = document.getElementById("baseUrlHint");
-  const baseUrlGroup = document.getElementById("baseUrlGroup");
-  const customBaseUrlGroup = document.getElementById("customBaseUrlGroup");
-  const modelGroupAnthropic = document.getElementById("modelGroupAnthropic");
-  const modelGroupDeepSeek = document.getElementById("modelGroupDeepSeek");
-  const modelGroupKimi = document.getElementById("modelGroupKimi");
-  const modelGroupCustom = document.getElementById("modelGroupCustom");
-
-  // Save current base URL to the correct slot before switching
-  const prev = baseUrlSelect.dataset.currentProvider || "";
-  if (prev === "deepseek") {
-    baseUrlSelect.dataset.deepseekUrl = baseUrlSelect.value;
-  } else if (prev === "kimi") {
-    baseUrlSelect.dataset.kimiUrl = baseUrlSelect.value;
-  } else if (prev === "custom") {
-    // custom uses its own input
-  } else if (prev) {
-    baseUrlSelect.dataset.anthropicUrl = baseUrlSelect.value;
-  }
-  baseUrlSelect.dataset.currentProvider = provider;
+function switchProvider(provider) {
+  const preset = PROVIDER_PRESETS[provider] || PROVIDER_PRESETS.custom;
+  const baseURLGroup = document.getElementById("settingsBaseURLGroup");
+  const baseURLInput = document.getElementById("settingsBaseURL");
+  const modelSelectWrap = document.getElementById("settingsModelSelectWrap");
+  const modelInputWrap = document.getElementById("settingsModelInputWrap");
+  const modelSelect = document.getElementById("settingsModel");
+  const modelHint = document.getElementById("settingsModelHint");
 
   if (provider === "custom") {
-    baseUrlGroup.style.display = "none";
-    customBaseUrlGroup.style.display = "";
-    modelGroupAnthropic.hidden = true;
-    modelGroupDeepSeek.hidden = true;
-    modelGroupKimi.hidden = true;
-    modelGroupCustom.hidden = false;
-    const modelSelect = document.getElementById("settingsModel");
-    if (modelSelect.value.startsWith("deepseek") || modelSelect.value.startsWith("kimi") || modelSelect.value.startsWith("moonshot")) {
-      modelSelect.value = "claude-opus-4-6";
-    }
-  } else if (provider === "kimi") {
-    baseUrlGroup.style.display = "";
-    customBaseUrlGroup.style.display = "none";
-    for (const opt of baseUrlSelect.options) {
-      opt.hidden = !opt.value.includes("moonshot.cn");
-    }
-    baseUrlSelect.value = baseUrlSelect.dataset.kimiUrl || "https://api.moonshot.cn/v1";
-    baseUrlHint.textContent = "Kimi 官方 API (月之暗面)";
-    modelGroupAnthropic.hidden = true;
-    modelGroupDeepSeek.hidden = true;
-    modelGroupKimi.hidden = false;
-    modelGroupCustom.hidden = true;
-    const modelSelect = document.getElementById("settingsModel");
-    if (!modelSelect.value.startsWith("kimi") && !modelSelect.value.startsWith("moonshot")) {
-      modelSelect.value = "kimi-latest";
-    }
-  } else if (provider === "deepseek") {
-    baseUrlGroup.style.display = "";
-    customBaseUrlGroup.style.display = "none";
-    for (const opt of baseUrlSelect.options) {
-      opt.hidden = !opt.value.includes("deepseek.com");
-    }
-    baseUrlSelect.value = baseUrlSelect.dataset.deepseekUrl || "https://api.deepseek.com";
-    baseUrlHint.textContent = "DeepSeek 官方 API";
-    modelGroupAnthropic.hidden = true;
-    modelGroupDeepSeek.hidden = false;
-    modelGroupKimi.hidden = true;
-    modelGroupCustom.hidden = true;
-    const modelSelect = document.getElementById("settingsModel");
-    if (!modelSelect.value.startsWith("deepseek")) {
-      modelSelect.value = "deepseek-chat";
-    }
+    baseURLGroup.style.display = "";
+    modelSelectWrap.style.display = "none";
+    modelInputWrap.style.display = "";
+    modelHint.textContent = "填写模型完整名称";
   } else {
-    baseUrlGroup.style.display = "";
-    customBaseUrlGroup.style.display = "none";
-    for (const opt of baseUrlSelect.options) {
-      opt.hidden = opt.value.includes("deepseek.com") || opt.value.includes("moonshot.cn");
-    }
-    baseUrlSelect.value = baseUrlSelect.dataset.anthropicUrl || "https://www.packyapi.com";
-    baseUrlHint.textContent = "中转站无需翻墙，官方线路需自备梯子";
-    modelGroupAnthropic.hidden = false;
-    modelGroupDeepSeek.hidden = true;
-    modelGroupKimi.hidden = true;
-    modelGroupCustom.hidden = true;
-    const modelSelect = document.getElementById("settingsModel");
-    if (modelSelect.value.startsWith("deepseek") || modelSelect.value.startsWith("kimi") || modelSelect.value.startsWith("moonshot")) {
-      modelSelect.value = "";
-    }
+    baseURLGroup.style.display = "none";
+    baseURLInput.value = preset.baseURL;
+    modelSelectWrap.style.display = "";
+    modelInputWrap.style.display = "none";
+    modelSelect.innerHTML = preset.models.map((m) =>
+      `<option value="${m.value}">${m.label}</option>`
+    ).join("");
+    modelHint.textContent = "";
   }
 }
 
 function initSettingsPanel() {
   const settingsOverlay = document.getElementById("settingsOverlay");
-
-  const providerSelect = document.getElementById("settingsProvider");
   const apiKeyInput = document.getElementById("settingsApiKey");
+  const providerSelect = document.getElementById("settingsProvider");
 
-  providerSelect.addEventListener("change", (e) => {
-    // Save current key back to correct slot before switching
-    const prev = e.target._prevProvider || "anthropic";
-    if (prev === "deepseek") {
-      apiKeyInput.dataset.deepseekKey = apiKeyInput.value;
-    } else if (prev === "kimi") {
-      apiKeyInput.dataset.kimiKey = apiKeyInput.value;
-    } else if (prev === "custom") {
-      apiKeyInput.dataset.customKey = apiKeyInput.value;
-    } else {
-      apiKeyInput.dataset.anthropicKey = apiKeyInput.value;
-    }
-    e.target._prevProvider = e.target.value;
-    // Show new provider's key
-    if (e.target.value === "deepseek") {
-      apiKeyInput.value = apiKeyInput.dataset.deepseekKey || "";
-    } else if (e.target.value === "kimi") {
-      apiKeyInput.value = apiKeyInput.dataset.kimiKey || "";
-    } else if (e.target.value === "custom") {
-      apiKeyInput.value = apiKeyInput.dataset.customKey || "";
-    } else {
-      apiKeyInput.value = apiKeyInput.dataset.anthropicKey || "";
-    }
-    syncProviderUI(e.target.value);
-  });
+  providerSelect.addEventListener("change", () => switchProvider(providerSelect.value));
 
   document.getElementById("settingsBtn").addEventListener("click", async () => {
     try {
       const s = await window.herAPI.getSettings();
-
-      // Detect provider from saved model
-      const provider = detectProvider(s.model, s.anthropicBaseURL || s.baseURL, s.deepseekBaseURL, s.kimiBaseURL);
-      providerSelect.value = provider;
-      providerSelect._prevProvider = provider;
-      syncProviderUI(provider);
-
-      // Store per-provider keys in data attributes
-      apiKeyInput.dataset.anthropicKey = s.anthropicApiKey || s.apiKey || "";
-      apiKeyInput.dataset.deepseekKey = s.deepseekApiKey || "";
-      apiKeyInput.dataset.kimiKey = s.kimiApiKey || "";
-      apiKeyInput.dataset.customKey = s.customApiKey || "";
-      // Show active provider's key
-      if (provider === "deepseek") {
-        apiKeyInput.value = apiKeyInput.dataset.deepseekKey;
-      } else if (provider === "kimi") {
-        apiKeyInput.value = apiKeyInput.dataset.kimiKey;
-      } else if (provider === "custom") {
-        apiKeyInput.value = apiKeyInput.dataset.customKey;
-        document.getElementById("settingsCustomBaseUrl").value = s.deepseekBaseURL || "";
+      apiKeyInput.value = s.apiKey || "";
+      // Detect provider from baseURL
+      const baseURL = s.baseURL || "";
+      let detectedProvider = "kimi";
+      if (baseURL.includes("openai.com")) detectedProvider = "openai";
+      else if (baseURL.includes("deepseek.com")) detectedProvider = "deepseek";
+      else if (baseURL.includes("moonshot.cn")) detectedProvider = "kimi";
+      else if (baseURL && !baseURL.includes("moonshot.cn")) detectedProvider = "custom";
+      providerSelect.value = detectedProvider;
+      switchProvider(detectedProvider);
+      if (detectedProvider === "custom") {
+        document.getElementById("settingsBaseURL").value = baseURL;
+        document.getElementById("settingsModelCustom").value = s.model || "";
       } else {
-        apiKeyInput.value = apiKeyInput.dataset.anthropicKey;
+        document.getElementById("settingsModel").value = s.model || PROVIDER_PRESETS[detectedProvider].models[0].value;
       }
-
-      // Seed per-provider base URL data attributes
-      const baseUrlSelect = document.getElementById("settingsBaseUrl");
-      baseUrlSelect.dataset.anthropicUrl = s.anthropicBaseURL || s.baseURL || "https://www.packyapi.com";
-      baseUrlSelect.dataset.deepseekUrl = s.deepseekBaseURL || "https://api.deepseek.com";
-      baseUrlSelect.dataset.kimiUrl = s.kimiBaseURL || "https://api.moonshot.cn/v1";
-      baseUrlSelect.dataset.currentProvider = provider;
-      if (provider === "deepseek") {
-        baseUrlSelect.value = baseUrlSelect.dataset.deepseekUrl;
-      } else if (provider === "kimi") {
-        baseUrlSelect.value = baseUrlSelect.dataset.kimiUrl;
-      } else if (provider !== "custom") {
-        baseUrlSelect.value = baseUrlSelect.dataset.anthropicUrl;
-      }
-      if (!baseUrlSelect.value && provider !== "custom") {
-        if (provider === "deepseek") baseUrlSelect.value = "https://api.deepseek.com";
-        else if (provider === "kimi") baseUrlSelect.value = "https://api.moonshot.cn/v1";
-        else baseUrlSelect.value = "https://www.packyapi.com";
-      }
-      document.getElementById("settingsModel").value = s.model || "";
       document.getElementById("settingsMsg").textContent = "";
     } catch (_) {}
-    refreshPairUI();
     settingsOverlay.classList.add("open");
   });
 
@@ -354,55 +226,23 @@ function initSettingsPanel() {
     btn.disabled = true;
     msgEl.textContent = "";
     try {
-      // Capture current input into the right provider slot
-      const currentProvider = providerSelect.value;
-      if (currentProvider === "deepseek") {
-        apiKeyInput.dataset.deepseekKey = apiKeyInput.value;
-      } else if (currentProvider === "kimi") {
-        apiKeyInput.dataset.kimiKey = apiKeyInput.value;
-      } else if (currentProvider === "custom") {
-        apiKeyInput.dataset.customKey = apiKeyInput.value;
-      } else {
-        apiKeyInput.dataset.anthropicKey = apiKeyInput.value;
-      }
+      const provider = providerSelect.value;
+      const preset = PROVIDER_PRESETS[provider] || PROVIDER_PRESETS.custom;
+      const model = provider === "custom"
+        ? document.getElementById("settingsModelCustom").value.trim()
+        : document.getElementById("settingsModel").value.trim();
+      const baseURL = provider === "custom"
+        ? document.getElementById("settingsBaseURL").value.trim()
+        : preset.baseURL;
 
-      const baseUrlSelect = document.getElementById("settingsBaseUrl");
-      const baseURL = baseUrlSelect.value.trim();
-      const payload = {
-        model: document.getElementById("settingsModel").value.trim(),
-      };
+      const payload = { model };
+      if (baseURL) payload.baseURL = baseURL;
 
-      // Send per-provider keys (only if not masked)
-      const aKey = (apiKeyInput.dataset.anthropicKey || "").trim();
-      const dKey = (apiKeyInput.dataset.deepseekKey || "").trim();
-      const kKey = (apiKeyInput.dataset.kimiKey || "").trim();
-      const cKey = (apiKeyInput.dataset.customKey || "").trim();
-      if (aKey && !aKey.includes("...")) payload.anthropicApiKey = aKey;
-      if (dKey && !dKey.includes("...")) payload.deepseekApiKey = dKey;
-      if (kKey && !kKey.includes("...")) payload.kimiApiKey = kKey;
-
-      // Save current base URL to the right slot, and send both
-      if (currentProvider === "custom") {
-        const customUrl = document.getElementById("settingsCustomBaseUrl").value.trim();
-        payload.deepseekBaseURL = customUrl;
-        payload.deepseekApiKey = cKey || "dummy";
-        payload.anthropicBaseURL = baseUrlSelect.dataset.anthropicUrl || "";
-        payload.kimiBaseURL = baseUrlSelect.dataset.kimiUrl || "";
-      } else if (currentProvider === "kimi") {
-        baseUrlSelect.dataset.kimiUrl = baseURL;
-        payload.kimiBaseURL = baseURL;
-        payload.anthropicBaseURL = baseUrlSelect.dataset.anthropicUrl || "";
-        payload.deepseekBaseURL = baseUrlSelect.dataset.deepseekUrl || "";
-      } else if (currentProvider === "deepseek") {
-        baseUrlSelect.dataset.deepseekUrl = baseURL;
-        payload.deepseekBaseURL = baseURL;
-        payload.anthropicBaseURL = baseUrlSelect.dataset.anthropicUrl || "";
-        payload.kimiBaseURL = baseUrlSelect.dataset.kimiUrl || "";
-      } else {
-        baseUrlSelect.dataset.anthropicUrl = baseURL;
-        payload.anthropicBaseURL = baseURL;
-        payload.deepseekBaseURL = baseUrlSelect.dataset.deepseekUrl || "";
-        payload.kimiBaseURL = baseUrlSelect.dataset.kimiUrl || "";
+      const key = apiKeyInput.value.trim();
+      if (key && !key.includes("...")) {
+        payload.apiKey = key;
+      } else if (!key) {
+        payload.apiKey = "__clear__";
       }
 
       const result = await window.herAPI.saveSettings(payload);
@@ -426,82 +266,6 @@ function initSettingsPanel() {
     } catch (e) {
       msgEl.textContent = e.message || "保存失败";
       msgEl.style.color = "#f87171";
-    }
-    btn.disabled = false;
-  });
-
-  // ── Pairing ──
-
-  // Store pairing result for tab switching
-  let pairResult = null;
-  let iphoneQrCache = null;
-
-  function showAndroidQr() {
-    const qrContainer = document.getElementById("pairQrContainer");
-    const statusText = document.getElementById("pairStatusText");
-    document.getElementById("pairShowAndroid").style.background = "#6ee7b7";
-    document.getElementById("pairShowAndroid").style.color = "#000";
-    document.getElementById("pairShowiPhone").style.background = "#333";
-    document.getElementById("pairShowiPhone").style.color = "#fff";
-    if (pairResult && pairResult.qrImage) {
-      qrContainer.innerHTML = `<img src="${pairResult.qrImage}" style="width:200px;height:200px;border-radius:8px;image-rendering:pixelated">`;
-      statusText.textContent = "用 Her Android 扫描此二维码";
-    } else {
-      qrContainer.innerHTML = `<div style="color:var(--text3);font-size:13px">已配对</div>`;
-      statusText.textContent = "";
-    }
-  }
-
-  async function showIphoneQr() {
-    const qrContainer = document.getElementById("pairQrContainer");
-    const statusText = document.getElementById("pairStatusText");
-    document.getElementById("pairShowiPhone").style.background = "#6ee7b7";
-    document.getElementById("pairShowiPhone").style.color = "#000";
-    document.getElementById("pairShowAndroid").style.background = "#333";
-    document.getElementById("pairShowAndroid").style.color = "#fff";
-    qrContainer.innerHTML = `<div style="color:#888;font-size:13px">生成中...</div>`;
-    try {
-      if (!iphoneQrCache) iphoneQrCache = await window.herAPI.getIphoneQr();
-      qrContainer.innerHTML = `<img src="${iphoneQrCache.qrImage}" style="width:200px;height:200px;border-radius:8px;image-rendering:pixelated">`;
-      statusText.textContent = "iPhone 相机扫码 → 打开链接 → 安装快捷指令";
-    } catch (e) {
-      qrContainer.innerHTML = `<div style="color:#f87171;font-size:13px">${e.message}</div>`;
-      statusText.textContent = "";
-    }
-  }
-
-  document.getElementById("pairShowAndroid").addEventListener("click", showAndroidQr);
-  document.getElementById("pairShowiPhone").addEventListener("click", showIphoneQr);
-
-  document.getElementById("pairGenerate").addEventListener("click", async () => {
-    const btn = document.getElementById("pairGenerate");
-    btn.disabled = true;
-    btn.textContent = "生成中...";
-    try {
-      pairResult = await window.herAPI.generatePair();
-      iphoneQrCache = null; // reset iPhone QR cache
-      document.getElementById("pairUnpaired").style.display = "none";
-      document.getElementById("pairPaired").style.display = "";
-      showAndroidQr();
-    } catch (e) {
-      toast(`配对失败: ${e.message}`);
-    }
-    btn.disabled = false;
-    btn.textContent = "生成连接码";
-  });
-
-  document.getElementById("pairRevoke").addEventListener("click", async () => {
-    if (!confirm("断开后手机将无法连接，确定吗？")) return;
-    const btn = document.getElementById("pairRevoke");
-    btn.disabled = true;
-    try {
-      await window.herAPI.revokePair();
-      document.getElementById("pairPaired").style.display = "none";
-      document.getElementById("pairUnpaired").style.display = "";
-      document.getElementById("pairQrContainer").innerHTML = "";
-      toast("已断开手机连接");
-    } catch (e) {
-      toast(`断开失败: ${e.message}`);
     }
     btn.disabled = false;
   });

@@ -16,9 +16,10 @@ let streamGroup = null;
 let thinkingEl = null;
 let currentCmd = null;
 let currentPhaseEl = null;
+let currentProgressEl = null;
 let currentPresence = null;
 let currentRelationshipSetup = null;
-let currentPassiveContext = { calendar: [], clipboard: "", frontApp: "", currentPage: null };
+let currentPassiveContext = { calendar: [], clipboard: "", frontApp: "" };
 let passiveContextRequest = null;
 let lastMsgTs = 0;
 let userNearBottom = true;
@@ -196,6 +197,10 @@ function removePhase() {
   if (currentPhaseEl) { currentPhaseEl.remove(); currentPhaseEl = null; }
 }
 
+function removeProgress() {
+  if (currentProgressEl) { currentProgressEl.remove(); currentProgressEl = null; }
+}
+
 function removeThinking() {
   if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
 }
@@ -318,7 +323,7 @@ async function send(text) {
       originalName: image.name || "",
     })),
     passiveContext: currentPassiveContext,
-    model: document.getElementById("modelSelect").dataset.value || "claude-sonnet-4-6",
+    model: document.getElementById("modelSelect").dataset.value || "kimi-k2-turbo-preview",
   });
 
   input.value = "";
@@ -436,20 +441,18 @@ function renderRelationshipSetup(setup = currentRelationshipSetup || { needsSetu
     setTimeout(() => {
       window.herAPI.sendMessage({
         message: `[system:first_meet] 这是用户第一次使用 Her。请你现在主动扫描用户的环境来了解他——调用这些工具：
-1. apple_notes (action: list) — 看看用户的备忘录
-2. apple_reminders (action: list) — 看看用户的待办
-3. recent_files (days: 3) — 看看最近在弄什么文件
+1. recent_files (days: 3) — 看看最近在弄什么文件
+2. bash — 看看桌面上有什么
 
 扫描完成后，用一段温暖、有点调皮的话跟用户打招呼。
 
 要求：
-- 调用工具时不要输出任何文字，不要说"让我看看"、"好，我来扫描"之类的话
+- 调用工具时不要输出任何文字
 - 只在拿到所有工具结果之后，才输出一段话
-- 绝对不要直接引用用户的任何具体内容（文件名、备忘录原文、提醒标题等）。这会让用户感觉被偷看、被裸露在别人面前
-- 而是通过你知道的这些内容，用模糊、感性、温暖的方式表达你的感知。比如不要说"你备忘录里写了xxx"，而是说"感觉你最近在认真做一件自己真正想做的事"
+- 绝对不要直接引用用户的任何具体内容（文件名等）。这会让用户感觉被偷看
+- 而是通过你知道的这些内容，用模糊、感性、温暖的方式表达你的感知
 - 像一个有灵性的人，不说"我看了你的文件"，而是说"我有种感觉……"
-- 用直觉式的、带温度的话去描述你感知到的用户画像
-- 最后留一个轻轻的钩子，让用户好奇想追问，但不要太直接
+- 最后留一个轻轻的钩子，让用户好奇想追问
 - 控制在 150 字以内，少即是多
 - 用中文`,
       });
@@ -464,10 +467,6 @@ function renderRelationshipSetup(setup = currentRelationshipSetup || { needsSetu
 // --- Presence home ---
 
 function renderPresenceHome(presence = currentPresence || getFallbackPresence(), options = {}) {
-  if (presence && presence.needsRelationshipSetup) {
-    renderRelationshipSetup(currentRelationshipSetup || { needsSetup: true, profile: presence.relationshipProfile || null });
-    return;
-  }
   currentPresence = presence;
   msgList.innerHTML = "";
   const welcome = document.createElement("div");
@@ -511,23 +510,21 @@ function renderPresenceHome(presence = currentPresence || getFallbackPresence(),
       </div>
     </div>
     <div id="home-calendar"></div>
-    <div class="presence-section">
+    <div id="home-todos-section" class="presence-section" style="display:none">
       <div class="presence-section-title"><svg><use href="#i-check"/></svg>待办</div>
-      <div id="home-todos"><div class="todo-empty" style="opacity:.4">加载中...</div></div>
+      <div id="home-todos"></div>
     </div>
-    <div class="presence-section" id="home-briefing-section"></div>
+
     <div class="presence-section">
       <div class="presence-section-title"><svg><use href="#i-sparkles"/></svg>试试说</div>
-      <div class="presence-actions">${actions}</div>
+      <div class="home-actions-grid">${actions}</div>
     </div>
   `;
   welcome.querySelectorAll("[data-msg]").forEach((card) => card.addEventListener("click", () => send(decodeURIComponent(card.dataset.msg))));
   msgList.appendChild(welcome);
 
   loadHomeProfile();
-  loadHomeBrowserDigest();
   loadHomeTodos();
-  loadHomeNewsBriefing();
 
   fillHomeCalendar(currentPassiveContext.calendar);
   if (!options.skipContextRefresh) {
@@ -537,39 +534,6 @@ function renderPresenceHome(presence = currentPresence || getFallbackPresence(),
 
 // --- Notification bars ---
 
-function showBrowserOffer(offer) {
-  const old = document.getElementById("browser-offer");
-  if (old) old.remove();
-  if (!offer || !offer.message) return;
-
-  const bar = document.createElement("div");
-  bar.id = "browser-offer";
-  bar.className = "browser-offer";
-  bar.innerHTML = `
-    <div class="browser-offer-meta">
-      <span class="browser-offer-chip">${esc(offer.domainLabel || offer.appName || "网页")}</span>
-      ${offer.title ? `<span class="browser-offer-title">${esc(offer.title)}</span>` : ""}
-    </div>
-    <div class="browser-offer-text">${esc(offer.message)}</div>
-    <div class="browser-offer-actions">
-      <button class="browser-offer-btn" data-action="primary">${esc(offer.primaryLabel || "聊这个")}</button>
-      <button class="browser-offer-btn ghost" data-action="secondary">${esc(offer.secondaryLabel || "补背景")}</button>
-      <button class="browser-offer-dismiss" aria-label="关闭">✕</button>
-    </div>
-  `;
-  bar.querySelector(".browser-offer-dismiss").addEventListener("click", () => bar.remove());
-  bar.querySelector('[data-action="primary"]').addEventListener("click", () => {
-    bar.remove();
-    send(offer.primaryPrompt || `顺着我刚刚正在看的内容继续聊：${offer.title || offer.url || ""}`);
-  });
-  bar.querySelector('[data-action="secondary"]').addEventListener("click", () => {
-    bar.remove();
-    send(offer.secondaryPrompt || `围绕我刚刚正在看的内容补一点背景：${offer.title || offer.url || ""}`);
-  });
-  const inputArea = document.getElementById("input-area");
-  inputArea.insertBefore(bar, inputArea.firstChild);
-  setTimeout(() => { if (bar.parentNode) bar.remove(); }, 22000);
-}
 
 function showContextReminder(reminder) {
   const old = document.getElementById("context-reminder");
@@ -600,20 +564,32 @@ function showContextReminder(reminder) {
   setTimeout(() => { if (bar.parentNode) bar.remove(); }, 18000);
 }
 
-window.addEventListener("focus", () => {
-  const old = document.getElementById("browser-offer");
-  if (old) old.remove();
-});
 
 // --- Event handler ---
 
 function handle(data) {
   if (window._firstMeetMode) {
-    if (data.type === "phase" || data.type === "command" || data.type === "command_output" || data.type === "thinking") return;
+    if (data.type === "phase" || data.type === "command" || data.type === "command_output" || data.type === "thinking" || data.type === "progress") return;
+  }
+
+  if (data.type === "progress") {
+    const group = getHerGroup();
+    if (!currentProgressEl) {
+      currentProgressEl = document.createElement("div");
+      currentProgressEl.className = "progress-block";
+      currentProgressEl.innerHTML = '<div class="progress-detail"></div><div class="progress-track"><div class="progress-fill"></div></div>';
+      group.appendChild(currentProgressEl);
+    }
+    const fill = currentProgressEl.querySelector(".progress-fill");
+    const detail = currentProgressEl.querySelector(".progress-detail");
+    if (fill) fill.style.width = `${Math.min(100, data.percent || 0)}%`;
+    if (detail) detail.textContent = data.detail || `${data.percent || 0}%`;
+    scrollDown();
+    return;
   }
 
   if (data.type === "phase") {
-    if (data.clear) removePhase();
+    if (data.clear) { removePhase(); removeProgress(); }
     else { setPhase(data); scrollDown(); }
     return;
   }
@@ -641,7 +617,7 @@ function handle(data) {
   removeThinking();
 
   if (data.type === "stream") {
-    removePhase();
+    removePhase(); removeProgress();
     finishCmd();
     if (!isGenerating) setGenerating(true);
     if (!streamEl) {
@@ -656,7 +632,7 @@ function handle(data) {
   }
 
   if (data.type === "stream_end") {
-    removePhase(); finishCmd();
+    removePhase(); removeProgress(); finishCmd();
     // End the stream content but keep isGenerating true — the backend may
     // still be executing tools. setGenerating(false) will be called by the
     // final "done" event or when the next user message cycle starts.
@@ -680,7 +656,7 @@ function handle(data) {
     const title = data.title || "执行命令";
     const detail = data.detail || command;
     const meta = detail ? `<div class="cmd-meta">${esc(detail)}</div>` : "";
-    block.innerHTML = `<div class="cmd-bar" onclick="this.querySelector('.cmd-toggle').classList.toggle('open');this.nextElementSibling.classList.toggle('open')"><div class="cmd-spinner"></div><div class="cmd-copy"><span class="cmd-label">${esc(title)}</span>${meta}</div><span class="cmd-toggle">▼</span></div><div class="cmd-detail"><div class="cmd-detail-cmd">$ ${esc(command)}</div></div>`;
+    block.innerHTML = `<div class="cmd-bar" onclick="this.querySelector('.cmd-toggle').classList.toggle('open');this.nextElementSibling.classList.toggle('open')"><div class="cmd-spinner"></div><div class="cmd-copy"><span class="cmd-label">${esc(title)}</span>${meta}</div><span class="cmd-toggle"></span></div><div class="cmd-detail"><div class="cmd-detail-cmd">$ ${esc(command)}</div></div>`;
     group.appendChild(block);
     currentCmd = block;
     scrollDown();
@@ -706,6 +682,7 @@ function handle(data) {
   }
 
   if (data.type === "file") {
+    removeProgress();
     const group = getHerGroup();
     const card = document.createElement("div");
     card.className = "file-card";
@@ -807,8 +784,7 @@ function handle(data) {
       profile: currentPresence.relationshipProfile || (currentRelationshipSetup ? currentRelationshipSetup.profile : null),
     };
     if (document.getElementById("welcome")) {
-      if (currentRelationshipSetup.needsSetup) renderRelationshipSetup(currentRelationshipSetup);
-      else renderPresenceHome(currentPresence);
+      renderPresenceHome(currentPresence);
     }
     return;
   }
@@ -825,8 +801,7 @@ function handle(data) {
 
   if (data.type === "open-file") { send(`帮我看看这个文件: ${data.filePath}`); return; }
   if (data.type === "context_reminder") { showContextReminder(data.reminder || {}); return; }
-  if (data.type === "browser_companion_offer") { showBrowserOffer(data.offer || {}); return; }
-  if (data.type === "browser_history_digest") { if (document.getElementById("home-browser-digest")) loadHomeBrowserDigest(); return; }
+
 
   if (data.type === "pin-changed") {
     document.getElementById("pinBtn").classList.toggle("pinned", data.pinned);
@@ -838,8 +813,7 @@ function handle(data) {
     currentCmd = null;
     const usageEl = document.getElementById("usageDisplay");
     if (usageEl) usageEl.className = "usage-display";
-    if (currentRelationshipSetup && currentRelationshipSetup.needsSetup) renderRelationshipSetup(currentRelationshipSetup);
-    else renderPresenceHome(currentPresence || getFallbackPresence());
+    renderPresenceHome(currentPresence || getFallbackPresence());
     sendBtn.disabled = true;
     toast("对话已清空");
     return;
@@ -920,10 +894,27 @@ function handle(data) {
         const bubble = document.createElement("div");
         bubble.className = "bubble";
         bubble.innerHTML = '';
-        const content = document.createElement("div");
-        content.className = "md";
-        content.innerHTML = mdCached(message.text);
-        bubble.appendChild(content);
+        // Restore file cards
+        if (message.files && message.files.length > 0) {
+          for (const f of message.files) {
+            const card = document.createElement("div");
+            card.className = "file-card";
+            let preview = "";
+            if (f.fileType === "video") preview = `<video controls preload="metadata" src="${f.url}"></video>`;
+            else if (f.fileType === "image") preview = `<img class="file-preview" src="${f.url}" alt="${esc(f.filename)}">`;
+            else if (f.fileType === "audio") preview = `<audio controls src="${f.url}"></audio>`;
+            const icons = { video: "#i-video", image: "#i-image", audio: "#i-music", file: "#i-file" };
+            const iconHtml = `<div class="file-icon"><svg><use href="${icons[f.fileType] || "#i-file"}"/></svg></div>`;
+            card.innerHTML = `${preview}<div class="file-bar">${iconHtml}<div class="file-meta"><div class="file-name">${esc(f.filename)}</div><div class="file-size">${f.size}</div></div><a class="file-dl" href="${f.url}" download="${esc(f.filename)}"><svg><use href="#i-download"/></svg></a></div>`;
+            bubble.appendChild(card);
+          }
+        }
+        if (message.text) {
+          const content = document.createElement("div");
+          content.className = "md";
+          content.innerHTML = mdCached(message.text);
+          bubble.appendChild(content);
+        }
         el.appendChild(bubble);
         msgList.appendChild(el);
       }
@@ -954,14 +945,11 @@ function setStatusConnected() {
 
 function setModelDisplay(model) {
   const element = document.getElementById("modelSelect");
-  element.dataset.value = model || "claude-opus-4-6";
-  if ((model || "").includes("opus-4-6")) element.textContent = "Opus 4.6";
-  else if ((model || "").includes("opus")) element.textContent = "Opus";
-  else if ((model || "").includes("sonnet")) element.textContent = "Sonnet";
-  else if ((model || "").includes("haiku")) element.textContent = "Haiku";
-  else if (model === "deepseek-chat") element.textContent = "DeepSeek V3";
-  else if (model === "deepseek-reasoner") element.textContent = "DeepSeek R1";
-  else element.textContent = model || "Model";
+  element.dataset.value = model || "kimi-k2-turbo-preview";
+  if ((model || "").includes("k2.5")) element.textContent = "Kimi K2.5";
+  else if ((model || "").includes("k2-turbo")) element.textContent = "Kimi K2 Turbo";
+  else if ((model || "").includes("kimi")) element.textContent = "Kimi";
+  else element.textContent = model || "Kimi K2";
 }
 window.setModelDisplay = setModelDisplay;
 
@@ -1166,14 +1154,12 @@ async function bootstrapApp() {
     const bootstrap = await window.herAPI.bootstrap();
     currentPresence = bootstrap.presence || getFallbackPresence();
     currentRelationshipSetup = bootstrap.onboarding || {
-      needsSetup: Boolean(currentPresence.needsRelationshipSetup),
+      needsSetup: false,
       profile: currentPresence.relationshipProfile || null,
     };
     setStatusConnected();
     setModelDisplay(bootstrap.model);
-    if (currentRelationshipSetup.needsSetup) {
-      showOnboarding(() => renderRelationshipSetup(currentRelationshipSetup));
-    } else if (currentRelationshipSetup.needsApiKey) {
+    if (currentRelationshipSetup.needsApiKey) {
       showApiKeySetup(() => {
         if (bootstrap.messages && bootstrap.messages.length > 0) handle({ type: "restore", messages: bootstrap.messages });
         else renderPresenceHome(currentPresence);

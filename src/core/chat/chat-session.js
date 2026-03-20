@@ -1,9 +1,7 @@
 const EventEmitter = require("events");
 const { net } = require("electron");
-const { createAnthropicClient } = require("./anthropic-client");
-const { createDeepSeekClient, convertMessagesForDeepSeek, convertToolsForDeepSeek } = require("./deepseek-client");
-const { createKimiClient, convertMessagesForKimi, convertToolsForKimi } = require("./kimi-client");
-const { DEFAULT_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN, DEEPSEEK_INPUT_COST_PER_TOKEN, DEEPSEEK_OUTPUT_COST_PER_TOKEN, KIMI_INPUT_COST_PER_TOKEN, KIMI_OUTPUT_COST_PER_TOKEN, getProviderForModel } = require("../shared/constants");
+const { createClient } = require("./anthropic-client");
+const { DEFAULT_MODEL, INPUT_COST_PER_TOKEN, OUTPUT_COST_PER_TOKEN } = require("../shared/constants");
 const { compactConversation, estimateTotalTokens, condenseDag, migrateInlineSummary, assembleContext } = require("./compaction");
 const { extractTurnMemories, extractAIMemories } = require("./memory-extractor");
 const { extractProfileObservations } = require("./profile-extractor");
@@ -15,7 +13,7 @@ const { createTools } = require("../tools/index");
 const { clipText, toPlainText, hasRenderableAssistantText, sanitizeForJson, getMessageText, formatPhaseDetail, formatScheduleNote } = require("./text-utils");
 const { TOOL_LABELS, MAX_TOOL_ROUNDS, MAX_NEWS_TOOL_CALLS, summarizeToolBlocks, isNewsTool, buildSyntheticToolReply } = require("./tool-utils");
 const { sortTodosForPrompt, buildTodayCommitments, syncTimelineEvents } = require("./timeline-utils");
-const { detectMode, findRecentTransientStateCue, normalizeBrowserContext, normalizeRelationshipProfile, buildRelationshipMemoryEntries, summarizeArtifact, summarizeTask } = require("./session-helpers");
+const { detectMode, findRecentTransientStateCue, normalizeRelationshipProfile, buildRelationshipMemoryEntries, summarizeArtifact, summarizeTask } = require("./session-helpers");
 
 class ChatSession extends EventEmitter {
   constructor({ paths, stores, createAnthropicClient, scheduleService, environmentMonitor, awarenessService }) {
@@ -33,6 +31,7 @@ class ChatSession extends EventEmitter {
     this.activeProcesses = [];
     this.sessionUsage = { input_tokens: 0, output_tokens: 0, total_cost: 0 };
     this.currentTurnContext = null;
+    this._turnFiles = []; // files emitted during current turn
 
     // Migrate old inline [CONVERSATION SUMMARY] to DAG if needed
     if (this.dagStore) {
@@ -44,7 +43,10 @@ class ChatSession extends EventEmitter {
       stores,
       scheduleService,
       createAnthropicClient,
-      emit: (event) => this.emit("event", event),
+      emit: (event) => {
+        if (event.type === "file") this._turnFiles.push(event);
+        this.emit("event", event);
+      },
     });
 
     if (!scheduleService.processScheduleOutput) {
@@ -80,10 +82,46 @@ class ChatSession extends EventEmitter {
     this.scheduleService.off("result", this.handleScheduleResult);
   }
 
+  /**
+   * Repair tool results in conversation history.
+   * Handles both OpenAI format (tool_calls / role:tool) and legacy Anthropic format.
+   */
   _repairToolResults() {
     const history = this.conversationHistory;
     let removedOrphans = 0;
 
+    // --- Handle OpenAI format: assistant with tool_calls followed by role:tool messages ---
+    for (let i = 0; i < history.length; i++) {
+      const msg = history[i];
+      if (msg.role !== "assistant" || !msg.tool_calls || msg.tool_calls.length === 0) continue;
+
+      const expectedIds = new Set(msg.tool_calls.map((tc) => tc.id));
+      const foundIds = new Set();
+
+      // Look ahead for tool result messages
+      let j = i + 1;
+      while (j < history.length && history[j].role === "tool") {
+        if (history[j].tool_call_id) foundIds.add(history[j].tool_call_id);
+        j++;
+      }
+
+      // Patch missing tool results
+      const missing = [...expectedIds].filter((id) => !foundIds.has(id));
+      if (missing.length > 0) {
+        const tc_map = new Map(msg.tool_calls.map((tc) => [tc.id, tc]));
+        const patchMessages = missing.map((id) => ({
+          role: "tool",
+          tool_call_id: id,
+          name: tc_map.get(id) ? tc_map.get(id).function.name : "unknown",
+          content: "Operation was interrupted.",
+        }));
+        // Insert after the last tool message (or after assistant)
+        history.splice(j, 0, ...patchMessages);
+        console.log(`[Chat] Repaired ${missing.length} missing tool result(s)`);
+      }
+    }
+
+    // --- Handle legacy Anthropic format for backward compat ---
     for (let i = history.length - 1; i >= 0; i--) {
       const msg = history[i];
       if (msg.role !== "user" || !Array.isArray(msg.content)) continue;
@@ -142,7 +180,7 @@ class ChatSession extends EventEmitter {
       } else {
         history.splice(i + 1, 0, { role: "user", content: patchResults });
       }
-      console.log(`[Chat] Repaired ${missing.length} missing tool_result(s)`);
+      console.log(`[Chat] Repaired ${missing.length} missing tool_result(s) (legacy)`);
     }
 
     if (removedOrphans > 0) {
@@ -160,8 +198,8 @@ class ChatSession extends EventEmitter {
       model: settings.model || DEFAULT_MODEL,
       usage: this.sessionUsage,
       onboarding: {
-        needsSetup: !settings.relationshipSetupCompleted,
-        needsApiKey: !settings.anthropicApiKey && !settings.deepseekApiKey && !settings.apiKey,
+        needsSetup: false,
+        needsApiKey: !settings.apiKey,
         profile: settings.relationshipProfile || null,
       },
     };
@@ -347,7 +385,7 @@ class ChatSession extends EventEmitter {
       presence,
       onboarding: {
         needsSetup: false,
-        needsApiKey: !this.stores.settingsStore.get().anthropicApiKey && !this.stores.settingsStore.get().deepseekApiKey && !this.stores.settingsStore.get().apiKey,
+        needsApiKey: !this.stores.settingsStore.get().apiKey,
         profile: nextProfile,
       },
     };
@@ -402,7 +440,41 @@ class ChatSession extends EventEmitter {
   _collectToolActions() {
     const actions = [];
     for (const msg of this.conversationHistory) {
-      if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+      if (msg.role !== "assistant") continue;
+      // OpenAI format: tool_calls array
+      if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          const fn = tc.function || {};
+          const name = fn.name || "unknown";
+          const label = TOOL_LABELS[name] || name;
+          let input = {};
+          try { input = JSON.parse(fn.arguments || "{}"); } catch {}
+          let detail = "";
+          if (name === "write_file" || name === "edit_file") {
+            detail = input.path || input.file_path || "";
+          } else if (name === "bash") {
+            detail = clipText(input.command || "", 80);
+          } else if (name === "read_file" || name === "glob" || name === "grep") {
+            detail = input.path || input.pattern || "";
+          } else if (name === "download_media" || name === "convert_media") {
+            detail = input.url || input.input || "";
+          } else if (name === "search_web" || name === "search_news") {
+            detail = input.query || "";
+          } else if (name === "read_url") {
+            detail = input.url || "";
+          } else if (name === "schedule_task") {
+            detail = input.description || "";
+          } else if (name === "send_file") {
+            detail = input.filename || input.path || "";
+          } else if (name === "memory") {
+            detail = input.key || "";
+          }
+          actions.push(detail ? `${label}: ${clipText(detail, 60)}` : label);
+        }
+        continue;
+      }
+      // Legacy Anthropic format
+      if (!Array.isArray(msg.content)) continue;
       for (const block of msg.content) {
         if (block.type !== "tool_use") continue;
         const label = TOOL_LABELS[block.name] || block.name;
@@ -459,7 +531,7 @@ class ChatSession extends EventEmitter {
     extractAIMemories({
       userText,
       assistantText,
-      createAnthropicClient: () => createAnthropicClient(this.stores.settingsStore),
+      createAnthropicClient: () => createClient(this.stores.settingsStore),
     }).then((aiEntries) => {
       if (aiEntries.length === 0) return;
       const aiFiltered = aiEntries.filter((entry) => !this.stores.memoryStore.hasSimilarEntry({
@@ -506,6 +578,9 @@ class ChatSession extends EventEmitter {
   getRestoredMessages() {
     const restored = [];
     for (const message of this.conversationHistory) {
+      if (message.role === "system") continue;
+      if (message.role === "tool") continue;
+
       if (message.role === "user") {
         if (typeof message.content === "string") {
           if (message.content.startsWith("[system:") || message.content.startsWith("[CONVERSATION SUMMARY]")) continue;
@@ -516,7 +591,7 @@ class ChatSession extends EventEmitter {
           const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
           if (text.startsWith("[system:") || text.startsWith("[CONVERSATION SUMMARY]")) continue;
           if (text) {
-            const hasImages = message.content.some((block) => block.type === "image");
+            const hasImages = message.content.some((block) => block.type === "image_url" || block.type === "image");
             restored.push({ role: "user", text, hasImages });
           }
         }
@@ -524,9 +599,14 @@ class ChatSession extends EventEmitter {
       }
 
       if (message.role === "assistant") {
-        const parts = Array.isArray(message.content) ? message.content : [{ type: "text", text: message.content }];
-        const text = parts.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-        if (text) restored.push({ role: "assistant", text });
+        const content = message.content;
+        const files = message.files || undefined;
+        if (typeof content === "string") {
+          if (content || files) restored.push({ role: "assistant", text: content || "", files });
+        } else if (Array.isArray(content)) {
+          const text = content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+          if (text || files) restored.push({ role: "assistant", text: text || "", files });
+        }
       }
     }
     return restored;
@@ -534,12 +614,11 @@ class ChatSession extends EventEmitter {
 
   emitUsage(response) {
     if (!response || !response.usage) return;
-    this.sessionUsage.input_tokens += response.usage.input_tokens || 0;
-    this.sessionUsage.output_tokens += response.usage.output_tokens || 0;
+    this.sessionUsage.input_tokens += response.usage.prompt_tokens || 0;
+    this.sessionUsage.output_tokens += response.usage.completion_tokens || 0;
 
-    const provider = response._provider || "anthropic";
-    const inputCost = provider === "deepseek" ? DEEPSEEK_INPUT_COST_PER_TOKEN : provider === "kimi" ? KIMI_INPUT_COST_PER_TOKEN : INPUT_COST_PER_TOKEN;
-    const outputCost = provider === "deepseek" ? DEEPSEEK_OUTPUT_COST_PER_TOKEN : provider === "kimi" ? KIMI_OUTPUT_COST_PER_TOKEN : OUTPUT_COST_PER_TOKEN;
+    const inputCost = INPUT_COST_PER_TOKEN;
+    const outputCost = OUTPUT_COST_PER_TOKEN;
     this.sessionUsage.total_cost =
       this.sessionUsage.input_tokens * inputCost +
       this.sessionUsage.output_tokens * outputCost;
@@ -553,11 +632,22 @@ class ChatSession extends EventEmitter {
   }
 
   async sendMessage({ message, images, model, passiveContext = null }) {
+    // If already processing, cancel current turn and queue this message
+    if (this._busy) {
+      this.cancel();
+      this._pendingMessage = { message, images, model, passiveContext };
+      return;
+    }
+
+    this._busy = true;
+    this._pendingMessage = null;
+
     try {
       if (message && message.trim() === "/clear") {
         this.conversationHistory = [];
         this.sessionUsage = { input_tokens: 0, output_tokens: 0, total_cost: 0 };
         this.currentTurnContext = null;
+        this._turnFiles = [];
         this._frozenMemory = this._buildMemorySnapshot();
         this.stores.conversationStore.clear();
         if (this.dagStore) this.dagStore.clear();
@@ -568,9 +658,9 @@ class ChatSession extends EventEmitter {
       }
 
       this.cancelled = false;
+      this._turnFiles = [];
       const messageText = getMessageText(message, images);
       const recentStateCue = findRecentTransientStateCue(this.conversationHistory);
-      const currentBrowserContext = normalizeBrowserContext(passiveContext && passiveContext.currentPage);
       const activeTodos = this.stores.todoStore ? sortTodosForPrompt(this.stores.todoStore.list()).slice(0, 6) : [];
       const todayCommitments = buildTodayCommitments(
         this.stores.todoStore,
@@ -579,17 +669,9 @@ class ChatSession extends EventEmitter {
       );
       syncTimelineEvents({ memoryStore: this.stores.memoryStore, todayCommitments });
       const relevantMemories = this.stores.memoryStore.getContextual(messageText, 6);
-      // Semantic search runs in background (non-blocking); keyword results are used immediately
-      // to eliminate the 1-3 second embedding API delay before streaming starts
-
-      // Retrieve relevant skills (local filesystem, fast)
-      const relevantSkills = this.stores.skillStore
-        ? this.stores.skillStore.getRelevant(messageText, 3)
-        : [];
 
       const turnInference = inferTurn({
         userText: messageText,
-        currentBrowserContext,
         activeTodos,
         relevantMemories,
         recentStateCue,
@@ -599,9 +681,7 @@ class ChatSession extends EventEmitter {
       this.currentTurnContext = {
         mode,
         relevantMemories,
-        relevantSkills,
         recentStateCue,
-        currentBrowserContext,
         turnInference,
         todayCommitments,
       };
@@ -629,22 +709,26 @@ class ChatSession extends EventEmitter {
         detail: formatPhaseDetail(messageText, relevantMemories.length),
       });
 
-      const userContent = images && images.length > 0
-        ? [
+      // Build user message in OpenAI format
+      let userContent;
+      if (images && images.length > 0) {
+        userContent = [
           ...images.map((image) => ({
-            type: "image",
-            source: { type: "base64", media_type: image.mediaType, data: image.base64 },
+            type: "image_url",
+            image_url: { url: `data:${image.mediaType};base64,${image.base64}` },
           })),
           { type: "text", text: message || "Please analyze this image" },
-        ]
-        : message;
+        ];
+      } else {
+        userContent = message;
+      }
 
       this.conversationHistory.push({ role: "user", content: userContent });
       this._repairToolResults();
 
       const compacted = await compactConversation({
         conversationHistory: this.conversationHistory,
-        anthropic: this.createAnthropicClient(),
+        anthropic: createClient(this.stores.settingsStore),
         emit: (event) => this.emit("event", event),
         dagStore: this.dagStore,
       });
@@ -665,12 +749,22 @@ class ChatSession extends EventEmitter {
       let lastToolBlocks = [];
       let lastToolResults = [];
 
-      while (response && response.stop_reason === "tool_use" && !this.cancelled) {
-        this.conversationHistory.push({ role: "assistant", content: response.content });
-        const toolBlocks = response.content.filter((block) => block.type === "tool_use");
-        const toolSummary = summarizeToolBlocks(toolBlocks);
+      while (response && response.finish_reason === "tool_calls" && !this.cancelled) {
+        // Store assistant message with tool_calls
+        const assistantMsg = { role: "assistant", content: response.content || null };
+        if (response.tool_calls && response.tool_calls.length > 0) {
+          assistantMsg.tool_calls = response.tool_calls;
+        }
+        this.conversationHistory.push(assistantMsg);
+
+        const toolCalls = response.tool_calls || [];
+        const toolSummary = summarizeToolBlocks(toolCalls.map((tc) => {
+          let input = {};
+          try { input = JSON.parse(tc.function.arguments || "{}"); } catch {}
+          return { name: tc.function.name, input, id: tc.id };
+        }));
         toolRoundCount += 1;
-        newsToolCallCount += toolBlocks.filter((block) => isNewsTool(block.name)).length;
+        newsToolCallCount += toolCalls.filter((tc) => isNewsTool(tc.function.name)).length;
 
         const exceededToolRounds = toolRoundCount > MAX_TOOL_ROUNDS;
         const exceededNewsSearches = newsToolCallCount > MAX_NEWS_TOOL_CALLS;
@@ -678,16 +772,16 @@ class ChatSession extends EventEmitter {
           const stopReason = exceededNewsSearches
             ? "已经拿到足够多的新闻来源，请停止继续搜索，直接基于现有结果总结。"
             : "工具调用轮次已经足够，请停止继续搜索或读取，直接基于现有结果回答。";
-          const forcedResults = toolBlocks.map((block) => ({
-            type: "tool_result",
-            tool_use_id: block.id,
+          const forcedResults = toolCalls.map((tc) => ({
+            role: "tool",
+            tool_call_id: tc.id,
+            name: tc.function.name,
             content: stopReason,
-            is_error: false,
           }));
 
-          lastToolBlocks = toolBlocks;
+          lastToolBlocks = toolCalls;
           lastToolResults = forcedResults;
-          this.conversationHistory.push({ role: "user", content: forcedResults });
+          this.conversationHistory.push(...forcedResults);
           this.emit("event", { type: "phase", label: "整理结果", detail: "信息已经足够，正在直接组织答复" });
           this.emit("event", { type: "thinking" });
 
@@ -697,12 +791,17 @@ class ChatSession extends EventEmitter {
           this.emitUsage(response);
 
           // Force model to stop calling tools
-          for (let forceRound = 0; forceRound < 3 && response && response.stop_reason === "tool_use"; forceRound++) {
-            this.conversationHistory.push({ role: "assistant", content: response.content });
-            const stubResults = response.content
-              .filter((b) => b.type === "tool_use")
-              .map((b) => ({ type: "tool_result", tool_use_id: b.id, content: "工具已禁用。不要再调用任何工具，直接用文字回答用户。", is_error: true }));
-            this.conversationHistory.push({ role: "user", content: stubResults });
+          for (let forceRound = 0; forceRound < 3 && response && response.finish_reason === "tool_calls"; forceRound++) {
+            const forceAssistantMsg = { role: "assistant", content: response.content || null };
+            if (response.tool_calls) forceAssistantMsg.tool_calls = response.tool_calls;
+            this.conversationHistory.push(forceAssistantMsg);
+            const stubResults = (response.tool_calls || []).map((tc) => ({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              content: "工具已禁用。不要再调用任何工具，直接用文字回答用户。",
+            }));
+            this.conversationHistory.push(...stubResults);
             this.currentAbort = new AbortController();
             response = await this.streamResponse(this.currentAbort.signal, model);
             this.currentAbort = null;
@@ -713,31 +812,89 @@ class ChatSession extends EventEmitter {
 
         this.emit("event", { type: "phase", label: "正在处理", detail: toolSummary });
 
+        // Execute tools
         const toolResults = this.cancelled
           ? []
-          : await Promise.allSettled(toolBlocks.map((block) => this.tools.execute(block, this.activeProcesses)))
+          : await Promise.allSettled(toolCalls.map((tc) => {
+              const fn = tc.function || {};
+              let input = {};
+              try { input = JSON.parse(fn.arguments || "{}"); } catch {}
+
+              // Handle Kimi builtin $web_search — just pass arguments back
+              if (fn.name === "$web_search") {
+                return Promise.resolve({
+                  type: "tool_result",
+                  tool_use_id: tc.id,
+                  content: fn.arguments || "{}",
+                });
+              }
+
+              return this.tools.execute(
+                { id: tc.id, name: fn.name, input },
+                this.activeProcesses
+              );
+            }))
               .then((settled) => settled.map((r, i) =>
                 r.status === "fulfilled"
                   ? r.value
-                  : { type: "tool_result", tool_use_id: toolBlocks[i].id, content: `Error: ${r.reason?.message || "unknown"}`, is_error: true }
+                  : { type: "tool_result", tool_use_id: toolCalls[i].id, content: `Error: ${r.reason?.message || "unknown"}`, is_error: true }
               ));
 
         if (this.cancelled) {
           const lastMessage = this.conversationHistory[this.conversationHistory.length - 1];
-          if (lastMessage && lastMessage.role === "assistant" && Array.isArray(lastMessage.content)) {
-            const cancelResults = lastMessage.content
-              .filter((block) => block.type === "tool_use")
-              .map((block) => ({ type: "tool_result", tool_use_id: block.id, content: "Cancelled by user." }));
-            if (cancelResults.length > 0) this.conversationHistory.push({ role: "user", content: cancelResults });
+          if (lastMessage && lastMessage.role === "assistant" && lastMessage.tool_calls) {
+            const cancelResults = lastMessage.tool_calls.map((tc) => ({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              content: "Cancelled by user.",
+            }));
+            this.conversationHistory.push(...cancelResults);
           }
           break;
         }
 
-        this.conversationHistory.push({ role: "user", content: toolResults });
-        lastToolBlocks = toolBlocks;
+        // Convert tool results to OpenAI format and push to history
+        const toolResultMessages = toolResults.map((result, i) => ({
+          role: "tool",
+          tool_call_id: result.tool_use_id || toolCalls[i].id,
+          name: toolCalls[i].function.name,
+          content: typeof result.content === "string" ? result.content : JSON.stringify(result.content || ""),
+        }));
+        this.conversationHistory.push(...toolResultMessages);
+
+        lastToolBlocks = toolCalls.map((tc) => {
+          let input = {};
+          try { input = JSON.parse(tc.function.arguments || "{}"); } catch {}
+          return { name: tc.function.name, input, id: tc.id };
+        });
         lastToolResults = toolResults;
         this.emit("event", { type: "phase", label: "整理结果", detail: `已完成${toolSummary}，正在组织答复` });
         this.emit("event", { type: "thinking" });
+
+        // Safety: ensure every tool_call has a matching tool result in history
+        const lastAssistant = this.conversationHistory.filter((m) => m.role === "assistant" && m.tool_calls).pop();
+        if (lastAssistant && lastAssistant.tool_calls) {
+          const expectedIds = new Set(lastAssistant.tool_calls.map((tc) => tc.id));
+          const foundIds = new Set();
+          for (let hi = this.conversationHistory.length - 1; hi >= 0; hi--) {
+            const m = this.conversationHistory[hi];
+            if (m.role === "tool" && m.tool_call_id) foundIds.add(m.tool_call_id);
+            if (m === lastAssistant) break;
+          }
+          for (const id of expectedIds) {
+            if (!foundIds.has(id)) {
+              const tc = lastAssistant.tool_calls.find((t) => t.id === id);
+              this.conversationHistory.push({
+                role: "tool",
+                tool_call_id: id,
+                name: tc ? tc.function.name : "unknown",
+                content: "Tool execution failed or was interrupted.",
+              });
+              console.log(`[Chat] Patched missing tool result for ${id}`);
+            }
+          }
+        }
 
         this.currentAbort = new AbortController();
         response = await this.streamResponse(this.currentAbort.signal, model);
@@ -750,7 +907,13 @@ class ChatSession extends EventEmitter {
       }
 
       if (response && !this.cancelled) {
-        this.conversationHistory.push({ role: "assistant", content: response.content });
+        const assistantEntry = { role: "assistant", content: response.content };
+        if (this._turnFiles.length > 0) {
+          assistantEntry.files = this._turnFiles.map((f) => ({
+            filename: f.filename, url: f.url, fileType: f.fileType, size: f.size,
+          }));
+        }
+        this.conversationHistory.push(assistantEntry);
         const deferredResponse = response;
         const deferredText = messageText;
         const deferredImages = images;
@@ -773,7 +936,7 @@ class ChatSession extends EventEmitter {
 
       // Post-turn: condense DAG if too many uncondensed leaves
       if (this.dagStore && this.dagStore.getUncondensedLeafCount() >= 4) {
-        condenseDag({ dagStore: this.dagStore, anthropic: this.createAnthropicClient() }).catch((err) => {
+        condenseDag({ dagStore: this.dagStore, anthropic: createClient(this.stores.settingsStore) }).catch((err) => {
           console.error("[Chat] DAG condensation error:", err.message);
         });
       }
@@ -789,6 +952,14 @@ class ChatSession extends EventEmitter {
       this.emit("event", { type: "error", text: messageText });
     } finally {
       this.currentTurnContext = null;
+      this._busy = false;
+
+      // Process queued message if user sent one while we were busy
+      const pending = this._pendingMessage;
+      if (pending) {
+        this._pendingMessage = null;
+        setImmediate(() => this.sendMessage(pending));
+      }
     }
   }
 
@@ -803,6 +974,40 @@ class ChatSession extends EventEmitter {
     });
     this.activeProcesses = [];
     this.emit("event", { type: "phase", clear: true });
+
+    // Patch any orphan tool_calls so the next API call won't fail
+    this._patchOrphanToolResults();
+    this.stores.conversationStore.save(this.conversationHistory);
+  }
+
+  /** Ensure every assistant tool_call has a matching tool result in history */
+  _patchOrphanToolResults() {
+    const history = this.conversationHistory;
+    for (let i = 0; i < history.length; i++) {
+      const msg = history[i];
+      if (msg.role !== "assistant" || !msg.tool_calls || msg.tool_calls.length === 0) continue;
+
+      const expectedIds = new Set(msg.tool_calls.map((tc) => tc.id));
+      const foundIds = new Set();
+      let j = i + 1;
+      while (j < history.length && history[j].role === "tool") {
+        if (history[j].tool_call_id) foundIds.add(history[j].tool_call_id);
+        j++;
+      }
+
+      const missing = [...expectedIds].filter((id) => !foundIds.has(id));
+      if (missing.length > 0) {
+        const tcMap = new Map(msg.tool_calls.map((tc) => [tc.id, tc]));
+        const patches = missing.map((id) => ({
+          role: "tool",
+          tool_call_id: id,
+          name: tcMap.get(id) ? tcMap.get(id).function.name : "unknown",
+          content: "Operation was cancelled.",
+        }));
+        history.splice(j, 0, ...patches);
+        console.log(`[Chat] Patched ${missing.length} orphan tool result(s) after cancel`);
+      }
+    }
   }
 
   async streamResponse(abortSignal, requestedModel, retries = 0) {
@@ -831,20 +1036,12 @@ class ChatSession extends EventEmitter {
   async streamResponseRaw(abortSignal, requestedModel) {
     const settings = this.stores.settingsStore.get();
     const selectedModel = requestedModel || settings.model || DEFAULT_MODEL;
-    const provider = getProviderForModel(selectedModel, settings.deepseekBaseURL);
-    if (provider === "kimi") {
-      return this._streamKimi(abortSignal, selectedModel);
-    }
-    if (provider === "deepseek") {
-      return this._streamDeepSeek(abortSignal, selectedModel);
-    }
     const frozen = this._frozenMemory || this._buildMemorySnapshot();
     const profileSummary = frozen.profileSummary;
     const understandingScore = frozen.understandingScore;
     const activeTodos = this.stores.todoStore ? sortTodosForPrompt(this.stores.todoStore.list()).slice(0, 6) : [];
     const environmentSnapshot = this.environmentMonitor ? this.environmentMonitor.getSnapshot() : null;
     const awarenessContext = this.awarenessService ? this.awarenessService.getContext() : "";
-    const openTabs = this.awarenessService ? this.awarenessService.getOpenTabs() : [];
     const stateSummary = this.stores.stateStore ? this.stores.stateStore.getPromptSummary() : "";
     const systemPrompt = getSystemPrompt({
       memoryStore: this.stores.memoryStore,
@@ -858,33 +1055,42 @@ class ChatSession extends EventEmitter {
       profileSummary,
       understandingScore,
       environmentSnapshot,
-      currentBrowserContext: this.currentTurnContext ? this.currentTurnContext.currentBrowserContext : null,
       todayCommitments: this.currentTurnContext ? this.currentTurnContext.todayCommitments : [],
       currentTurnInference: this.currentTurnContext ? this.currentTurnContext.turnInference : null,
       currentStateSummary: stateSummary,
       awarenessContext,
-      openTabs,
       frozenMemory: frozen,
-      relevantSkills: this.currentTurnContext ? this.currentTurnContext.relevantSkills || [] : [],
     });
-    // selectedModel already declared at top of streamResponseRaw
-    if (this.tools.setModel) this.tools.setModel(selectedModel);
-    const anthropic = createAnthropicClient(this.stores.settingsStore);
 
-    const anthropicBase = settings.anthropicBaseURL || settings.baseURL || "";
-    const supportsWebSearch = !anthropicBase || anthropicBase.includes("anthropic.com") || anthropicBase.includes("aihubmix.com");
-    const allTools = [
-      ...this.tools.tools,
-      // web_search is an Anthropic server-side tool — not supported by some proxies (e.g. Bedrock)
-      ...(supportsWebSearch ? [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }] : []),
+    if (this.tools.setModel) this.tools.setModel(selectedModel);
+    const client = createClient(this.stores.settingsStore);
+
+    // Build messages array with system prompt as first message
+    // Filter out empty assistant messages and strip non-API fields (e.g. files)
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...this.conversationHistory
+        .filter((m) => {
+          if (m.role === "assistant") {
+            const hasContent = m.content && (typeof m.content === "string" ? m.content.trim() : true);
+            const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
+            return hasContent || hasToolCalls;
+          }
+          return true;
+        })
+        .map((m) => {
+          if (m.files) { const { files, ...rest } = m; return rest; }
+          return m;
+        }),
     ];
 
     const payload = sanitizeForJson({
       model: selectedModel,
       max_tokens: 16384,
-      system: systemPrompt,
-      tools: allTools,
-      messages: this.conversationHistory,
+      tools: this.tools.getTools ? this.tools.getTools(selectedModel) : this.tools.tools,
+      messages,
+      stream: true,
+      thinking: { type: "disabled" },
     });
 
     const controller = new AbortController();
@@ -896,15 +1102,11 @@ class ChatSession extends EventEmitter {
       }, { once: true });
     }
 
-    const stream = anthropic.messages.stream(payload, { signal: controller.signal });
+    const stream = await client.chat.completions.create(payload, { signal: controller.signal });
 
-    const contentBlocks = [];
     let currentText = "";
-    let currentToolName = "";
-    let currentToolId = "";
-    let currentToolJson = "";
-    let currentBlockType = null;
-    let stopReason = "end_turn";
+    let toolCalls = []; // array of { id, function: { name, arguments } }
+    let finishReason = "stop";
     let usage = {};
 
     let textBuffer = "";
@@ -917,70 +1119,56 @@ class ChatSession extends EventEmitter {
       flushTimer = null;
     };
 
-    for await (const event of stream) {
+    for await (const chunk of stream) {
       if (aborted) break;
 
-      if (event.type === "content_block_start") {
-        const block = event.content_block;
-        if (block.type === "text") {
-          currentBlockType = "text";
-          currentText = block.text || "";
-        } else if (block.type === "tool_use") {
-          currentBlockType = "tool_use";
-          currentToolName = block.name;
-          currentToolId = block.id;
-          currentToolJson = "";
-        } else if (block.type === "server_tool_use") {
-          currentBlockType = "server_tool_use";
-          currentToolName = block.name;
-          currentToolId = block.id;
-          currentToolJson = "";
-        } else if (block.type === "web_search_tool_result") {
-          currentBlockType = "web_search_result";
+      const choice = chunk.choices && chunk.choices[0];
+      if (!choice) {
+        // May be a usage-only chunk
+        if (chunk.usage) usage = { ...usage, ...chunk.usage };
+        continue;
+      }
+
+      const delta = choice.delta;
+      if (!delta) {
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+        continue;
+      }
+
+      // Text content
+      if (delta.content) {
+        currentText += delta.content;
+        textBuffer += delta.content;
+        if (textBuffer.length >= 12) {
+          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+          flushText();
+        } else if (!flushTimer) {
+          flushTimer = setTimeout(flushText, 30);
         }
-      } else if (event.type === "content_block_delta") {
-        const delta = event.delta;
-        if (delta.type === "text_delta") {
-          currentText += delta.text;
-          textBuffer += delta.text;
-          if (textBuffer.length >= 12) {
-            if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-            flushText();
-          } else if (!flushTimer) {
-            flushTimer = setTimeout(flushText, 30);
+      }
+
+      // Tool calls (streamed incrementally)
+      if (delta.tool_calls) {
+        for (const tcDelta of delta.tool_calls) {
+          const idx = tcDelta.index;
+          // Ensure slot exists
+          while (toolCalls.length <= idx) {
+            toolCalls.push({ id: "", function: { name: "", arguments: "" } });
           }
-        } else if (delta.type === "input_json_delta") {
-          currentToolJson += delta.partial_json;
+          if (tcDelta.id) toolCalls[idx].id = tcDelta.id;
+          if (tcDelta.function) {
+            if (tcDelta.function.name) toolCalls[idx].function.name = tcDelta.function.name;
+            if (tcDelta.function.arguments) toolCalls[idx].function.arguments += tcDelta.function.arguments;
+          }
         }
-      } else if (event.type === "content_block_stop") {
-        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-        flushText();
-        if (currentBlockType === "text") {
-          contentBlocks.push({ type: "text", text: currentText });
-          currentText = "";
-        } else if (currentBlockType === "tool_use") {
-          let input = {};
-          try { input = JSON.parse(currentToolJson); } catch {}
-          contentBlocks.push({ type: "tool_use", id: currentToolId, name: currentToolName, input });
-          currentToolName = "";
-          currentToolId = "";
-          currentToolJson = "";
-        } else if (currentBlockType === "server_tool_use") {
-          let input = {};
-          try { input = JSON.parse(currentToolJson); } catch {}
-          contentBlocks.push({ type: "server_tool_use", id: currentToolId, name: currentToolName, input });
-          currentToolName = "";
-          currentToolId = "";
-          currentToolJson = "";
-        } else if (currentBlockType === "web_search_result") {
-          contentBlocks.push(event.content_block || { type: "web_search_tool_result" });
-        }
-        currentBlockType = null;
-      } else if (event.type === "message_delta") {
-        if (event.delta && event.delta.stop_reason) stopReason = event.delta.stop_reason;
-        if (event.usage) usage = { ...usage, ...event.usage };
-      } else if (event.type === "message_start" && event.message) {
-        if (event.message.usage) usage = event.message.usage;
+      }
+
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+
+      if (chunk.usage) {
+        usage = { ...usage, ...chunk.usage };
       }
     }
 
@@ -989,369 +1177,26 @@ class ChatSession extends EventEmitter {
 
     if (!aborted) this.emit("event", { type: "stream_end" });
 
-    const cleanedBlocks = contentBlocks.filter((b) =>
-      b.type !== "server_tool_use" && b.type !== "web_search_tool_result"
-    );
+    // Content as plain string for OpenAI/Kimi API compatibility
+    const content = currentText || "";
 
-    return {
-      content: cleanedBlocks.length > 0 ? cleanedBlocks : [{ type: "text", text: "" }],
-      stop_reason: stopReason,
+    const result = {
+      content,
+      finish_reason: finishReason,
       usage: {
-        input_tokens: usage.input_tokens || 0,
-        output_tokens: usage.output_tokens || 0,
+        prompt_tokens: usage.prompt_tokens || 0,
+        completion_tokens: usage.completion_tokens || 0,
       },
     };
+
+    // Attach tool_calls if present
+    if (toolCalls.length > 0 && finishReason === "tool_calls") {
+      result.tool_calls = toolCalls;
+    }
+
+    return result;
   }
 
-  /**
-   * DeepSeek streaming — OpenAI-compatible SSE format.
-   * Returns the same response shape as Anthropic streaming for compatibility.
-   */
-  async _streamDeepSeek(abortSignal, selectedModel) {
-    const settings = this.stores.settingsStore.get();
-    const frozen = this._frozenMemory || this._buildMemorySnapshot();
-    const profileSummary = frozen.profileSummary;
-    const understandingScore = frozen.understandingScore;
-    const activeTodos = this.stores.todoStore ? sortTodosForPrompt(this.stores.todoStore.list()).slice(0, 6) : [];
-    const environmentSnapshot = this.environmentMonitor ? this.environmentMonitor.getSnapshot() : null;
-    const awarenessContext = this.awarenessService ? this.awarenessService.getContext() : "";
-    const openTabs = this.awarenessService ? this.awarenessService.getOpenTabs() : [];
-    const stateSummary = this.stores.stateStore ? this.stores.stateStore.getPromptSummary() : "";
-    const systemPrompt = getSystemPrompt({
-      memoryStore: this.stores.memoryStore,
-      sharedDir: this.paths.sharedDir,
-      relevantMemories: this.currentTurnContext ? this.currentTurnContext.relevantMemories : [],
-      activeSchedules: this.scheduleService.getActiveTasks(6),
-      activeTodos,
-      mode: this.currentTurnContext ? this.currentTurnContext.mode : "general",
-      relationshipProfile: settings.relationshipProfile || null,
-      recentStateCue: this.currentTurnContext ? this.currentTurnContext.recentStateCue : "",
-      profileSummary,
-      understandingScore,
-      environmentSnapshot,
-      currentBrowserContext: this.currentTurnContext ? this.currentTurnContext.currentBrowserContext : null,
-      todayCommitments: this.currentTurnContext ? this.currentTurnContext.todayCommitments : [],
-      currentTurnInference: this.currentTurnContext ? this.currentTurnContext.turnInference : null,
-      currentStateSummary: stateSummary,
-      awarenessContext,
-      openTabs,
-      frozenMemory: frozen,
-      relevantSkills: this.currentTurnContext ? this.currentTurnContext.relevantSkills || [] : [],
-    });
-
-    if (this.tools.setModel) this.tools.setModel(selectedModel);
-
-    const dsClient = createDeepSeekClient(this.stores.settingsStore);
-    const dsTools = convertToolsForDeepSeek(this.tools.tools);
-    const dsMessages = convertMessagesForDeepSeek(systemPrompt, this.conversationHistory);
-
-    const controller = new AbortController();
-    let aborted = false;
-    if (abortSignal) {
-      abortSignal.addEventListener("abort", () => {
-        aborted = true;
-        controller.abort();
-      }, { once: true });
-    }
-
-    const stream = await dsClient.chatStream({
-      model: selectedModel,
-      messages: dsMessages,
-      max_tokens: 8192,
-      tools: dsTools.length > 0 ? dsTools : undefined,
-      signal: controller.signal,
-    });
-
-    // Parse SSE from ReadableStream
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let currentText = "";
-    let toolCalls = {};  // indexed by tool call index
-    let stopReason = "end_turn";
-    let usage = {};
-
-    let textBuffer = "";
-    let flushTimer = null;
-    const flushText = () => {
-      if (textBuffer && !aborted) {
-        this.emit("event", { type: "stream", text: textBuffer });
-        textBuffer = "";
-      }
-      flushTimer = null;
-    };
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done || aborted) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (data === "[DONE]") continue;
-
-          let parsed;
-          try { parsed = JSON.parse(data); } catch { continue; }
-
-          // Handle usage (may come in a separate chunk with stream_options)
-          if (parsed.usage) {
-            usage = {
-              input_tokens: parsed.usage.prompt_tokens || 0,
-              output_tokens: parsed.usage.completion_tokens || 0,
-            };
-          }
-
-          const choice = parsed.choices && parsed.choices[0];
-          if (!choice) continue;
-
-          if (choice.finish_reason) {
-            stopReason = choice.finish_reason === "tool_calls" ? "tool_use" : "end_turn";
-          }
-
-          const delta = choice.delta;
-          if (!delta) continue;
-
-          // Text content
-          if (delta.content) {
-            currentText += delta.content;
-            textBuffer += delta.content;
-            if (textBuffer.length >= 12) {
-              if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-              flushText();
-            } else if (!flushTimer) {
-              flushTimer = setTimeout(flushText, 30);
-            }
-          }
-
-          // Tool calls
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index;
-              if (!toolCalls[idx]) {
-                toolCalls[idx] = { id: tc.id || "", name: "", arguments: "" };
-              }
-              if (tc.id) toolCalls[idx].id = tc.id;
-              if (tc.function) {
-                if (tc.function.name) toolCalls[idx].name = tc.function.name;
-                if (tc.function.arguments) toolCalls[idx].arguments += tc.function.arguments;
-              }
-            }
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-    flushText();
-    if (!aborted) this.emit("event", { type: "stream_end" });
-
-    // Build Anthropic-compatible content blocks
-    const contentBlocks = [];
-    if (currentText) {
-      contentBlocks.push({ type: "text", text: currentText });
-    }
-    for (const idx of Object.keys(toolCalls).sort((a, b) => a - b)) {
-      const tc = toolCalls[idx];
-      let input = {};
-      try { input = JSON.parse(tc.arguments); } catch {}
-      contentBlocks.push({
-        type: "tool_use",
-        id: tc.id,
-        name: tc.name,
-        input,
-      });
-    }
-
-    return {
-      content: contentBlocks.length > 0 ? contentBlocks : [{ type: "text", text: "" }],
-      stop_reason: stopReason,
-      _provider: "deepseek",
-      usage: {
-        input_tokens: usage.input_tokens || 0,
-        output_tokens: usage.output_tokens || 0,
-      },
-    };
-  }
-
-  /**
-   * Kimi streaming — OpenAI-compatible SSE format with multimodal support.
-   */
-  async _streamKimi(abortSignal, selectedModel) {
-    const settings = this.stores.settingsStore.get();
-    const frozen = this._frozenMemory || this._buildMemorySnapshot();
-    const profileSummary = frozen.profileSummary;
-    const understandingScore = frozen.understandingScore;
-    const activeTodos = this.stores.todoStore ? sortTodosForPrompt(this.stores.todoStore.list()).slice(0, 6) : [];
-    const environmentSnapshot = this.environmentMonitor ? this.environmentMonitor.getSnapshot() : null;
-    const awarenessContext = this.awarenessService ? this.awarenessService.getContext() : "";
-    const openTabs = this.awarenessService ? this.awarenessService.getOpenTabs() : [];
-    const stateSummary = this.stores.stateStore ? this.stores.stateStore.getPromptSummary() : "";
-    const systemPrompt = getSystemPrompt({
-      memoryStore: this.stores.memoryStore,
-      sharedDir: this.paths.sharedDir,
-      relevantMemories: this.currentTurnContext ? this.currentTurnContext.relevantMemories : [],
-      activeSchedules: this.scheduleService.getActiveTasks(6),
-      activeTodos,
-      mode: this.currentTurnContext ? this.currentTurnContext.mode : "general",
-      relationshipProfile: settings.relationshipProfile || null,
-      recentStateCue: this.currentTurnContext ? this.currentTurnContext.recentStateCue : "",
-      profileSummary,
-      understandingScore,
-      environmentSnapshot,
-      currentBrowserContext: this.currentTurnContext ? this.currentTurnContext.currentBrowserContext : null,
-      todayCommitments: this.currentTurnContext ? this.currentTurnContext.todayCommitments : [],
-      currentTurnInference: this.currentTurnContext ? this.currentTurnContext.turnInference : null,
-      currentStateSummary: stateSummary,
-      awarenessContext,
-      openTabs,
-      frozenMemory: frozen,
-      relevantSkills: this.currentTurnContext ? this.currentTurnContext.relevantSkills || [] : [],
-    });
-
-    if (this.tools.setModel) this.tools.setModel(selectedModel);
-
-    const kimiClient = createKimiClient(this.stores.settingsStore);
-    const kimiTools = convertToolsForKimi(this.tools.tools);
-    const kimiMessages = convertMessagesForKimi(systemPrompt, this.conversationHistory);
-
-    const controller = new AbortController();
-    let aborted = false;
-    if (abortSignal) {
-      abortSignal.addEventListener("abort", () => {
-        aborted = true;
-        controller.abort();
-      }, { once: true });
-    }
-
-    const stream = await kimiClient.chatStream({
-      model: selectedModel,
-      messages: kimiMessages,
-      max_tokens: 8192,
-      tools: kimiTools.length > 0 ? kimiTools : undefined,
-      signal: controller.signal,
-    });
-
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let currentText = "";
-    let toolCalls = {};
-    let stopReason = "end_turn";
-    let usage = {};
-
-    let textBuffer = "";
-    let flushTimer = null;
-    const flushText = () => {
-      if (textBuffer && !aborted) {
-        this.emit("event", { type: "stream", text: textBuffer });
-        textBuffer = "";
-      }
-      flushTimer = null;
-    };
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done || aborted) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (data === "[DONE]") continue;
-
-          let parsed;
-          try { parsed = JSON.parse(data); } catch { continue; }
-
-          if (parsed.usage) {
-            usage = {
-              input_tokens: parsed.usage.prompt_tokens || 0,
-              output_tokens: parsed.usage.completion_tokens || 0,
-            };
-          }
-
-          const choice = parsed.choices && parsed.choices[0];
-          if (!choice) continue;
-
-          if (choice.finish_reason) {
-            stopReason = choice.finish_reason === "tool_calls" ? "tool_use" : "end_turn";
-          }
-
-          const delta = choice.delta;
-          if (!delta) continue;
-
-          if (delta.content) {
-            currentText += delta.content;
-            textBuffer += delta.content;
-            if (textBuffer.length >= 12) {
-              if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-              flushText();
-            } else if (!flushTimer) {
-              flushTimer = setTimeout(flushText, 30);
-            }
-          }
-
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index;
-              if (!toolCalls[idx]) {
-                toolCalls[idx] = { id: tc.id || "", name: "", arguments: "" };
-              }
-              if (tc.id) toolCalls[idx].id = tc.id;
-              if (tc.function) {
-                if (tc.function.name) toolCalls[idx].name = tc.function.name;
-                if (tc.function.arguments) toolCalls[idx].arguments += tc.function.arguments;
-              }
-            }
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-    flushText();
-    if (!aborted) this.emit("event", { type: "stream_end" });
-
-    const contentBlocks = [];
-    if (currentText) {
-      contentBlocks.push({ type: "text", text: currentText });
-    }
-    for (const idx of Object.keys(toolCalls).sort((a, b) => a - b)) {
-      const tc = toolCalls[idx];
-      let input = {};
-      try { input = JSON.parse(tc.arguments); } catch {}
-      contentBlocks.push({
-        type: "tool_use",
-        id: tc.id,
-        name: tc.name,
-        input,
-      });
-    }
-
-    return {
-      content: contentBlocks.length > 0 ? contentBlocks : [{ type: "text", text: "" }],
-      stop_reason: stopReason,
-      _provider: "kimi",
-      usage: {
-        input_tokens: usage.input_tokens || 0,
-        output_tokens: usage.output_tokens || 0,
-      },
-    };
-  }
 }
 
 module.exports = { ChatSession };

@@ -12,7 +12,7 @@ const THEMES = {
 class CreateXlsxTool extends BaseTool {
   get name() { return "create_xlsx"; }
   get timeout() { return 30000; }
-  get description() { return "Create a polished Excel spreadsheet (.xlsx). Supports themes (blue/green/dark/minimal), auto-filter, freeze panes, formulas, and charts (bar/line/pie). Multiple sheets supported."; }
+  get description() { return "Create a polished Excel spreadsheet (.xlsx). Supports themes (blue/green/dark/minimal), auto-filter, freeze panes, formulas (use Excel formulas like '=SUM(B2:B9)' not hardcoded values), and charts (bar/line/pie/column). Multiple sheets supported."; }
   get input_schema() {
     return {
       type: "object",
@@ -29,12 +29,16 @@ class CreateXlsxTool extends BaseTool {
               rows: { type: "array", items: { type: "array" } },
               column_widths: { type: "array", items: { type: "number" } },
               freeze: { type: "string" }, auto_filter: { type: "boolean" },
-              formulas: { type: "object" },
+              formulas: { type: "object", description: "Map of cell ref to formula, e.g. {\"B10\": \"=SUM(B2:B9)\"}" },
               chart: {
                 type: "object",
                 properties: {
-                  type: { type: "string", enum: ["bar", "line", "pie"] },
-                  title: { type: "string" }, position: { type: "string" },
+                  type: { type: "string", enum: ["bar", "line", "pie", "column"], description: "Chart type" },
+                  title: { type: "string", description: "Chart title" },
+                  position: { type: "string", description: "Top-left cell for chart placement, e.g. 'E2'" },
+                  data_range: { type: "string", description: "Data range for chart, e.g. 'A1:C10'. If omitted, uses all data." },
+                  category_col: { type: "integer", description: "0-based column index for category labels. Default: 0" },
+                  value_cols: { type: "array", items: { type: "integer" }, description: "0-based column indices for value series. Default: all numeric columns" },
                 },
               },
             },
@@ -85,6 +89,8 @@ class CreateXlsxTool extends BaseTool {
       rows.forEach((rowData, ri) => {
         const parsedRow = rowData.map((v) => {
           if (typeof v === "string") {
+            // Preserve formulas
+            if (v.startsWith("=")) return { formula: v.slice(1) };
             const n = Number(v);
             if (!isNaN(n) && v.trim() !== "") return n;
           }
@@ -133,9 +139,15 @@ class CreateXlsxTool extends BaseTool {
         ws.views = [{ state: "frozen", xSplit: colNum - 1, ySplit: row - 1 }];
       }
 
-      // Auto filter
+      // Auto filter — handle >26 columns correctly
       if (sd.auto_filter !== false && headers.length) {
-        ws.autoFilter = { from: "A1", to: `${String.fromCharCode(64 + headers.length)}${rows.length + 1}` };
+        const lastColLetter = colIndexToLetter(headers.length - 1);
+        ws.autoFilter = { from: "A1", to: `${lastColLetter}${rows.length + 1}` };
+      }
+
+      // Chart
+      if (sd.chart) {
+        addChart(ws, sd, theme);
       }
     }
 
@@ -146,6 +158,76 @@ class CreateXlsxTool extends BaseTool {
     }
     return { content: "Failed to create Excel", is_error: true };
   }
+}
+
+function colIndexToLetter(index) {
+  let letter = "";
+  let n = index;
+  while (n >= 0) {
+    letter = String.fromCharCode(65 + (n % 26)) + letter;
+    n = Math.floor(n / 26) - 1;
+  }
+  return letter;
+}
+
+function addChart(ws, sd, theme) {
+  const chart = sd.chart;
+  const headers = sd.headers || [];
+  const rows = sd.rows || [];
+  if (rows.length === 0 || headers.length < 2) return;
+
+  const categoryCol = chart.category_col || 0;
+  let valueCols = chart.value_cols;
+  if (!valueCols || valueCols.length === 0) {
+    // Auto-detect numeric columns
+    valueCols = [];
+    for (let ci = 0; ci < headers.length; ci++) {
+      if (ci === categoryCol) continue;
+      const hasNumeric = rows.some((r) => {
+        const v = r[ci];
+        return typeof v === "number" || (typeof v === "string" && !isNaN(Number(v)) && v.trim() !== "");
+      });
+      if (hasNumeric) valueCols.push(ci);
+    }
+  }
+  if (valueCols.length === 0) return;
+
+  // ExcelJS chart support
+  const chartTypeMap = { bar: "bar", column: "bar", line: "line", pie: "pie" };
+  const excelType = chartTypeMap[chart.type] || "bar";
+
+  // Parse position
+  const pos = chart.position || colIndexToLetter(headers.length + 1) + "2";
+
+  const series = valueCols.map((ci) => ({
+    name: headers[ci] || `Series ${ci}`,
+    categories: rows.map((r) => String(r[categoryCol] || "")),
+    values: rows.map((r) => {
+      const v = r[ci];
+      if (typeof v === "number") return v;
+      if (typeof v === "string") { const n = Number(v); return isNaN(n) ? 0 : n; }
+      return 0;
+    }),
+  }));
+
+  try {
+    ws.addChart(excelType, {
+      title: chart.title || "",
+      series,
+      position: { from: { col: letterToColIndex(pos.replace(/[0-9]/g, "")), row: parseInt(pos.replace(/[A-Z]/gi, ""), 10) - 1 } },
+      width: 600,
+      height: 400,
+      ...(chart.type === "column" ? { grouping: "clustered" } : {}),
+      ...(chart.type === "bar" ? { grouping: "clustered", barDir: "bar" } : {}),
+    });
+  } catch (err) {
+    // ExcelJS chart API may vary by version — log but don't fail the whole file
+    console.error("[XLSX Chart] Failed to add chart:", err.message);
+  }
+}
+
+function letterToColIndex(letter) {
+  return letter.split("").reduce((acc, c) => acc * 26 + c.toUpperCase().charCodeAt(0) - 64, 0) - 1;
 }
 
 module.exports = CreateXlsxTool;

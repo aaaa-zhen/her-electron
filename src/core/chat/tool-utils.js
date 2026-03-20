@@ -11,6 +11,7 @@ const TOOL_LABELS = {
   download_media: "下载媒体",
   convert_media: "处理媒体",
   web_search: "搜索网页",
+  search_news: "搜索新闻",
   read_url: "读取网页",
 };
 
@@ -76,13 +77,10 @@ function buildSyntheticToolReply(toolBlocks = [], toolResults = []) {
       .map(({ result }) => String(result.content || "").trim())
       .find(Boolean);
 
-    return [{
-      type: "text",
-      text: [
+    return [
         `我刚才已经完成了${toolSummary}，但这次没拿到可用结果。`,
         firstFailure ? `原因大概是：${firstFailure.slice(0, 220)}` : "",
-      ].filter(Boolean).join("\n\n"),
-    }];
+      ].filter(Boolean).join("\n\n");
   }
 
   const previews = [];
@@ -91,13 +89,10 @@ function buildSyntheticToolReply(toolBlocks = [], toolResults = []) {
     if (preview) previews.push(preview);
   }
 
-  return [{
-    type: "text",
-    text: [
+  return [
       `我刚才已经完成了${toolSummary}。`,
       previews.length > 0 ? `先把拿到的结果直接给你：\n\n${previews.join("\n\n")}` : "上面的步骤已经执行完了。",
-    ].join("\n\n"),
-  }];
+    ].join("\n\n");
 }
 
 module.exports = {
