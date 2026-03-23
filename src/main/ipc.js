@@ -106,7 +106,7 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
       if (status === 403) {
         friendly = "当前 API Key 分组可能不支持所选模型，请尝试切换模型或更换 Key";
       } else if (status === 401) {
-        friendly = "API Key 无效或已过期，请检查后重试";
+        friendly = "API Key 无效或已过期，请确认 Key 和服务商匹配";
       } else if (status === 429) {
         friendly = "请求过于频繁，请稍后再试";
       } else if (status === 503 || status === 502) {

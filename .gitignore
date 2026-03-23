@@ -7,3 +7,8 @@ data/
 .DS_Store
 Thumbs.db
 her-release.md
+.claude/worktrees/
+Pi/
+site/
+.claude/
+.claude/

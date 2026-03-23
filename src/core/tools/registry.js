@@ -1121,7 +1121,7 @@ echo "Alarm set"`;
           ["media", format === "audio" ? "audio" : "video"],
           { kind: format === "audio" ? "audio" : "video", origin: "download_media", sourceUrl: url }
         );
-        return { type: "tool_result", tool_use_id: block.id, content: `Downloaded: ${filename}` };
+        return { type: "tool_result", tool_use_id: block.id, content: `Downloaded and displayed: ${filename}. Do NOT call send_file — it's already shown to the user.` };
       }
       return { type: "tool_result", tool_use_id: block.id, content: `Download output:\n${output.slice(0, 3000)}` };
     }

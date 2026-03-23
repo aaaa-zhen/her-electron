@@ -4,7 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
-const { exec } = require("child_process");
+const { exec, execFile, spawn } = require("child_process");
 const Anthropic = require("@anthropic-ai/sdk").default;
 const multer = require("multer");
 const nodeCron = require("node-cron");
@@ -34,9 +34,8 @@ function saveSettings(settings) {
 }
 
 // ===== Anthropic Client =====
-const BUILTIN_API_KEY = "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";
-const PROXY_API_KEY = "sk-RXrApj5lZRHWkgcLfbAyTW2UGvXxvuiSTKV35MUQfpblmSzQ";
-const PROXY_BASE_URL = "https://www.packyapi.com";
+const PROXY_API_KEY = process.env.PROXY_API_KEY || "";
+const PROXY_BASE_URL = process.env.PROXY_BASE_URL || "https://www.packyapi.com";
 
 function createAnthropicClient() {
   const settings = loadSettings();
@@ -170,6 +169,21 @@ function execAsync(command, options = {}) {
   });
   promise.child = childProcess;
   return promise;
+}
+
+function execFileAsync(cmd, args, options = {}) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, {
+      encoding: "utf-8",
+      timeout: options.timeout || 120000,
+      cwd: options.cwd || SHARED_DIR,
+      maxBuffer: 5 * 1024 * 1024,
+      ...options,
+    }, (err, stdout, stderr) => {
+      if (err) resolve((stdout || "") + (stderr || err.message || "Command failed"));
+      else resolve(stdout || stderr || "");
+    });
+  });
 }
 
 // ===== Path Safety =====
@@ -797,27 +811,57 @@ async function executeTool(block, ws, activeProcesses) {
       return { type: "tool_result", tool_use_id: block.id, content: "Invalid URL", is_error: true };
     }
     try {
-      let cmd;
-      const safeUrl = url.replace(/[`$(){}|;&]/g, "");
+      const args = [];
       if (format === "audio") {
-        cmd = `yt-dlp -x --audio-format mp3 --audio-quality 0 -o "${SHARED_DIR}/%(title)s.%(ext)s" --no-playlist --print filename "${safeUrl}"`;
+        args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
       } else {
         const qualityMap = { "best": "bestvideo+bestaudio/best", "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]", "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]" };
-        const fmt = qualityMap[quality] || qualityMap["best"];
-        cmd = `yt-dlp -f "${fmt}" --merge-output-format mp4 -o "${SHARED_DIR}/%(title)s.%(ext)s" --no-playlist --print filename "${safeUrl}"`;
+        args.push("-f", qualityMap[quality] || qualityMap["best"], "--merge-output-format", "mp4");
       }
+      args.push("-o", path.join(SHARED_DIR, "%(title)s.%(ext)s"), "--no-playlist", "--newline", "--print", "filename", url);
+
       ws.send(JSON.stringify({ type: "command", command: `yt-dlp: downloading ${format} from ${url}` }));
-      const dlPromise = execAsync(cmd, { timeout: 600000 });
-      if (dlPromise.child) activeProcesses.push(dlPromise.child);
-      const output = await dlPromise;
-      if (dlPromise.child) { const idx = activeProcesses.indexOf(dlPromise.child); if (idx >= 0) activeProcesses.splice(idx, 1); }
+
+      const output = await new Promise((resolve, reject) => {
+        let stdout = "";
+        let stderr = "";
+        const child = spawn("yt-dlp", args, { cwd: SHARED_DIR });
+        activeProcesses.push(child);
+
+        child.stdout.on("data", (data) => { stdout += data.toString(); });
+        child.stderr.on("data", (data) => {
+          const text = data.toString();
+          stderr += text;
+          // Parse yt-dlp progress from stderr
+          const m = text.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\s*\w+)/);
+          if (m) {
+            ws.send(JSON.stringify({ type: "progress", percent: parseFloat(m[1]), detail: `${m[1]}% of ${m[2]}` }));
+          }
+        });
+
+        const timer = setTimeout(() => { child.kill("SIGTERM"); reject(new Error("Download timeout")); }, 600000);
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          const idx = activeProcesses.indexOf(child);
+          if (idx >= 0) activeProcesses.splice(idx, 1);
+          resolve(stdout + stderr);
+        });
+        child.on("error", (err) => {
+          clearTimeout(timer);
+          const idx = activeProcesses.indexOf(child);
+          if (idx >= 0) activeProcesses.splice(idx, 1);
+          reject(err);
+        });
+      });
+
       const lines = output.trim().split("\n");
       const filename = path.basename(lines[lines.length - 1].trim());
       const filePath = path.join(SHARED_DIR, filename);
       if (fs.existsSync(filePath)) {
         const stat = fs.statSync(filePath);
+        ws.send(JSON.stringify({ type: "progress", percent: 100, detail: "完成" }));
         ws.send(JSON.stringify({ type: "file", filename, url: `/shared/${encodeURIComponent(filename)}`, fileType: getFileType(filename), size: formatSize(stat.size), sizeBytes: stat.size }));
-        return { type: "tool_result", tool_use_id: block.id, content: `Downloaded: ${filename} (${formatSize(stat.size)})` };
+        return { type: "tool_result", tool_use_id: block.id, content: `Downloaded: ${filename} (${formatSize(stat.size)}). File already sent to user — do NOT send it again or copy it.` };
       }
       return { type: "tool_result", tool_use_id: block.id, content: `Download output:\n${output.slice(0, 3000)}` };
     } catch (err) {
@@ -831,12 +875,48 @@ async function executeTool(block, ws, activeProcesses) {
     if (!inputPath || !outputPath) return { type: "tool_result", tool_use_id: block.id, content: "Invalid file path", is_error: true };
     if (!fs.existsSync(inputPath)) return { type: "tool_result", tool_use_id: block.id, content: `Input file not found`, is_error: true };
     try {
-      const cmd = `ffmpeg -y -i "${inputPath}" ${options} "${outputPath}"`;
+      const args = ["-y", "-i", inputPath];
+      if (options.trim()) args.push(...options.trim().split(/\s+/));
+      args.push("-progress", "pipe:1", outputPath);
+
       ws.send(JSON.stringify({ type: "command", command: `ffmpeg: ${inputFile} -> ${outputFile}` }));
-      const ffPromise = execAsync(cmd, { timeout: 600000 });
-      if (ffPromise.child) activeProcesses.push(ffPromise.child);
-      const output = await ffPromise;
-      if (ffPromise.child) { const idx = activeProcesses.indexOf(ffPromise.child); if (idx >= 0) activeProcesses.splice(idx, 1); }
+
+      const output = await new Promise((resolve, reject) => {
+        let stdout = "";
+        let stderr = "";
+        const child = spawn("ffmpeg", args, { cwd: SHARED_DIR });
+        activeProcesses.push(child);
+
+        child.stdout.on("data", (data) => {
+          const text = data.toString();
+          stdout += text;
+          // Parse ffmpeg progress: out_time_ms or progress=end
+          const timeMatch = text.match(/out_time_ms=(\d+)/);
+          if (timeMatch) {
+            const seconds = parseInt(timeMatch[1]) / 1000000;
+            ws.send(JSON.stringify({ type: "progress", percent: -1, detail: `已处理 ${seconds.toFixed(1)}s` }));
+          }
+          if (text.includes("progress=end")) {
+            ws.send(JSON.stringify({ type: "progress", percent: 100, detail: "完成" }));
+          }
+        });
+        child.stderr.on("data", (data) => { stderr += data.toString(); });
+
+        const timer = setTimeout(() => { child.kill("SIGTERM"); reject(new Error("Convert timeout")); }, 600000);
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          const idx = activeProcesses.indexOf(child);
+          if (idx >= 0) activeProcesses.splice(idx, 1);
+          resolve(stdout + stderr);
+        });
+        child.on("error", (err) => {
+          clearTimeout(timer);
+          const idx = activeProcesses.indexOf(child);
+          if (idx >= 0) activeProcesses.splice(idx, 1);
+          reject(err);
+        });
+      });
+
       if (fs.existsSync(outputPath)) {
         const stat = fs.statSync(outputPath);
         ws.send(JSON.stringify({ type: "file", filename: outputFile, url: `/shared/${encodeURIComponent(outputFile)}`, fileType: getFileType(outputFile), size: formatSize(stat.size), sizeBytes: stat.size }));
@@ -851,8 +931,11 @@ async function executeTool(block, ws, activeProcesses) {
     const { query, num_results = 5 } = block.input;
     try {
       const encoded = encodeURIComponent(query);
-      const cmd = `curl -sL "https://html.duckduckgo.com/html/?q=${encoded}" -H "User-Agent: Mozilla/5.0" | head -c 100000`;
-      const html = await execAsync(cmd, { timeout: 15000 });
+      const html = await execFileAsync("curl", [
+        "-sL", `https://html.duckduckgo.com/html/?q=${encoded}`,
+        "-H", "User-Agent: Mozilla/5.0",
+        "--max-filesize", "100000",
+      ], { timeout: 15000 });
       const results = [];
       const regex = /<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
       let match;
@@ -873,8 +956,12 @@ async function executeTool(block, ws, activeProcesses) {
   } else if (block.name === "read_url") {
     const { url } = block.input;
     try {
-      const cmd = `curl -sL -m 15 -H "User-Agent: Mozilla/5.0 (compatible)" "${url}" | head -c 200000`;
-      const html = await execAsync(cmd, { timeout: 20000 });
+      const html = await execFileAsync("curl", [
+        "-sL", "-m", "15",
+        "-H", "User-Agent: Mozilla/5.0 (compatible)",
+        "--max-filesize", "200000",
+        url,
+      ], { timeout: 20000 });
       let text = html
         .replace(/<script[\s\S]*?<\/script>/gi, "")
         .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -965,8 +1052,7 @@ async function executeTool(block, ws, activeProcesses) {
     ws.send(JSON.stringify({ type: "command", command: `glob: ${pattern} in ${searchDir}` }));
     try {
       const namePattern = pattern.includes("/") ? pattern.split("/").pop() : pattern;
-      const cmd = `find "${searchDir}" -name "${namePattern}" -type f 2>/dev/null | head -100`;
-      const output = await execAsync(cmd);
+      const output = await execFileAsync("find", [searchDir, "-name", namePattern, "-type", "f"], { timeout: 120000 });
       const result = output.trim() || "No files found.";
       ws.send(JSON.stringify({ type: "command_output", output: result.slice(0, 5000) }));
       return { type: "tool_result", tool_use_id: block.id, content: result.slice(0, 10000) };
@@ -977,11 +1063,12 @@ async function executeTool(block, ws, activeProcesses) {
   } else if (block.name === "grep") {
     const { pattern, path: searchPath, include } = block.input;
     const dir = searchPath || require("os").homedir();
-    const includeFlag = include ? `--include="${include}"` : "";
     ws.send(JSON.stringify({ type: "command", command: `grep: "${pattern}" in ${dir}` }));
     try {
-      const cmd = `grep -rn ${includeFlag} "${pattern}" "${dir}" 2>/dev/null | head -200`;
-      const output = await execAsync(cmd);
+      const args = ["-rn"];
+      if (include) args.push(`--include=${include}`);
+      args.push(pattern, dir);
+      const output = await execFileAsync("grep", args);
       const result = output.trim() || "No matches found.";
       ws.send(JSON.stringify({ type: "command_output", output: result.slice(0, 5000) }));
       return { type: "tool_result", tool_use_id: block.id, content: result.slice(0, 10000) };

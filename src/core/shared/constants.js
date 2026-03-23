@@ -1,9 +1,10 @@
-const DEFAULT_MODEL = "kimi-k2-turbo-preview";
-const SUMMARY_MODEL = "kimi-k2-turbo-preview";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
+const SUMMARY_MODEL = "claude-haiku-4-5-20251001";
 
 const AVAILABLE_MODELS = [
-  { id: "kimi-k2-turbo-preview", name: "Kimi K2 Turbo", description: "快速、高性价比" },
-  { id: "kimi-k2.5", name: "Kimi K2.5", description: "最强、更深度思考" },
+  { id: "claude-opus-4-6", name: "Claude Opus 4.6", description: "最强、深度推理" },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", description: "均衡、高性价比" },
+  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", description: "快速、低成本" },
 ];
 
 const INPUT_COST_PER_TOKEN = 1 / 1_000_000;

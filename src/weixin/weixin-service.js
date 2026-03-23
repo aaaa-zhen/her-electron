@@ -338,11 +338,11 @@ class WeixinService extends EventEmitter {
 
     const stores = {
       settingsStore: new SettingsStore(this.mainDataDir),
-      conversationStore: new ConversationStore(userDataDir),
-      memoryStore: new MemoryStore(userDataDir),
+      conversationStore: new ConversationStore(userDataDir),    // 对话历史隔离
+      memoryStore: new MemoryStore(this.mainDataDir),           // 共享主记忆
       scheduleStore: new ScheduleStore(userDataDir),
-      todoStore: new TodoStore(userDataDir),
-      profileStore: new ProfileStore(userDataDir),
+      todoStore: new TodoStore(this.mainDataDir),               // 共享 todo
+      profileStore: new ProfileStore(this.mainDataDir),         // 共享用户画像
       stateStore: new StateStore(userDataDir),
       summaryDagStore: new SummaryDagStore(userDataDir),
     };

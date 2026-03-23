@@ -30,7 +30,7 @@ class SettingsStore extends JsonFileStore {
     const settings = this.read();
     const merged = {
       apiKey: "",
-      baseURL: "https://api.moonshot.cn/v1",
+      baseURL: "https://www.packyapi.com",
       model: DEFAULT_MODEL,
       relationshipProfile: null,
       relationshipSetupCompleted: false,

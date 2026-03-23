@@ -15,6 +15,59 @@ const { TOOL_LABELS, MAX_TOOL_ROUNDS, MAX_NEWS_TOOL_CALLS, summarizeToolBlocks, 
 const { sortTodosForPrompt, buildTodayCommitments, syncTimelineEvents } = require("./timeline-utils");
 const { detectMode, findRecentTransientStateCue, normalizeRelationshipProfile, buildRelationshipMemoryEntries, summarizeArtifact, summarizeTask } = require("./session-helpers");
 
+/**
+ * Select which tools to include based on user message content.
+ * Normal chat → no tools (saves ~3000 tokens).
+ * Action-oriented messages → relevant tool subset.
+ */
+function selectToolsForMessage(text, allTools) {
+  if (!text || !allTools || allTools.length === 0) return [];
+
+  const t = text.toLowerCase();
+  const needed = new Set();
+
+  // Always-on lightweight tools (memory + todo, ~430 tokens total)
+  const alwaysOn = ["memory", "todo"];
+
+  // Keyword → tool groups mapping
+  const rules = [
+    { keys: /文件|file|read|write|edit|代码|code|编程|项目|bug|修|改|写.*脚本|script|python|node|程序/, tools: ["bash", "read_file", "write_file", "edit_file", "glob", "grep"] },
+    { keys: /搜索|搜|search|查一下|查查|google|百度|新闻|news/, tools: ["web_search", "read_url"] },
+    { keys: /网页|网站|url|链接|http|www/, tools: ["read_url"] },
+    { keys: /下载|download|视频|音频|youtube|bilibili|抖音|b站|tiktok/, tools: ["download_media", "bash", "send_file"] },
+    { keys: /转换|convert|ffmpeg|mp3|mp4/, tools: ["convert_media", "send_file"] },
+    { keys: /ppt|pptx|幻灯片|演示/, tools: ["create_pptx", "send_file"] },
+    { keys: /word|docx|文档/, tools: ["create_docx", "send_file"] },
+    { keys: /excel|xlsx|表格|spreadsheet/, tools: ["create_xlsx", "send_file"] },
+    { keys: /提醒|remind|闹钟|alarm|计时|timer/, tools: ["apple_reminders", "apple_clock"] },
+    { keys: /备忘录|notes|笔记/, tools: ["apple_notes"] },
+    { keys: /日程|schedule|定时|cron/, tools: ["schedule_task"] },
+    { keys: /最近.*文件|recent.*file/, tools: ["recent_files"] },
+    { keys: /发送|send_file|发给我|给我看/, tools: ["send_file"] },
+    { keys: /终端|terminal|命令|command|运行|run|执行|pip|npm|brew|git/, tools: ["bash"] },
+    { keys: /找|find|locate|在哪|grep|搜.*文件/, tools: ["glob", "grep", "bash"] },
+    { keys: /图片|image|photo|照片|截图|看看这/, tools: ["bash", "send_file"] },
+    { keys: /via 微信/, tools: ["memory", "web_search", "read_url"] },
+  ];
+
+  for (const rule of rules) {
+    if (rule.keys.test(t)) {
+      for (const name of rule.tools) needed.add(name);
+    }
+  }
+
+  // If no action detected, return empty (pure chat, no tools)
+  if (needed.size === 0) return [];
+
+  // Add always-on tools
+  for (const name of alwaysOn) needed.add(name);
+
+  return allTools.filter((tool) => {
+    const name = tool.name || (tool.function && tool.function.name);
+    return needed.has(name);
+  });
+}
+
 class ChatSession extends EventEmitter {
   constructor({ paths, stores, createAnthropicClient, scheduleService, environmentMonitor, awarenessService }) {
     super();
@@ -660,6 +713,7 @@ class ChatSession extends EventEmitter {
       this.cancelled = false;
       this._turnFiles = [];
       const messageText = getMessageText(message, images);
+      this._lastMessageText = messageText; // for tool selection in streamResponseRaw
       const recentStateCue = findRecentTransientStateCue(this.conversationHistory);
       const activeTodos = this.stores.todoStore ? sortTodosForPrompt(this.stores.todoStore.list()).slice(0, 6) : [];
       const todayCommitments = buildTodayCommitments(
@@ -1085,10 +1139,14 @@ class ChatSession extends EventEmitter {
         }),
     ];
 
+    // Only include tools when the message likely needs them (saves ~3000 tokens per turn)
+    const allTools = this.tools.getTools ? this.tools.getTools(selectedModel) : this.tools.tools;
+    const neededTools = selectToolsForMessage(this._lastMessageText || "", allTools);
+
     const payload = sanitizeForJson({
       model: selectedModel,
       max_tokens: 16384,
-      tools: this.tools.getTools ? this.tools.getTools(selectedModel) : this.tools.tools,
+      tools: neededTools.length > 0 ? neededTools : undefined,
       messages,
       stream: true,
       thinking: { type: "disabled" },
