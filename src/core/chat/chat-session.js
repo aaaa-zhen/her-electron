@@ -32,7 +32,7 @@ function selectToolsForMessage(text, allTools) {
   // Keyword → tool groups mapping
   const rules = [
     { keys: /文件|file|read|write|edit|代码|code|编程|项目|bug|修|改|写.*脚本|script|python|node|程序/, tools: ["bash", "read_file", "write_file", "edit_file", "glob", "grep"] },
-    { keys: /搜索|搜|search|查一下|查查|google|百度|新闻|news/, tools: ["web_search", "read_url"] },
+    { keys: /搜索|搜|search|查一下|查查|google|百度|新闻|news/, tools: ["her_web_search", "read_url"] },
     { keys: /网页|网站|url|链接|http|www/, tools: ["read_url"] },
     { keys: /下载|download|视频|音频|youtube|bilibili|抖音|b站|tiktok/, tools: ["download_media", "bash", "send_file"] },
     { keys: /转换|convert|ffmpeg|mp3|mp4/, tools: ["convert_media", "send_file"] },
@@ -47,7 +47,7 @@ function selectToolsForMessage(text, allTools) {
     { keys: /终端|terminal|命令|command|运行|run|执行|pip|npm|brew|git/, tools: ["bash"] },
     { keys: /找|find|locate|在哪|grep|搜.*文件/, tools: ["glob", "grep", "bash"] },
     { keys: /图片|image|photo|照片|截图|看看这/, tools: ["bash", "send_file"] },
-    { keys: /via 微信/, tools: ["memory", "web_search", "read_url"] },
+    { keys: /via 微信/, tools: ["memory", "her_web_search", "read_url"] },
   ];
 
   for (const rule of rules) {
@@ -1143,9 +1143,12 @@ class ChatSession extends EventEmitter {
     const allTools = this.tools.getTools ? this.tools.getTools(selectedModel) : this.tools.tools;
     const neededTools = selectToolsForMessage(this._lastMessageText || "", allTools);
 
+    // WeChat: shorter output for faster responses
+    const isWeChat = (this._lastMessageText || "").includes("[via 微信]");
+
     const payload = sanitizeForJson({
       model: selectedModel,
-      max_tokens: 16384,
+      max_tokens: isWeChat ? 2048 : 16384,
       tools: neededTools.length > 0 ? neededTools : undefined,
       messages,
       stream: true,

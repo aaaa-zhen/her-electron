@@ -403,7 +403,7 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
       },
     },
     {
-      name: "web_search",
+      name: "her_web_search",
       description: "Search the web using Anthropic's built-in search. Returns relevant results with snippets. Use this for real-time information, current events, facts, etc.",
       input_schema: {
         type: "object",
