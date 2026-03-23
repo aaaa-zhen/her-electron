@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld("herAPI", {
   getProfile: () => ipcRenderer.invoke("her:get-profile"),
   checkUpdate: () => ipcRenderer.invoke("her:check-update"),
   openUrl: (url) => ipcRenderer.invoke("her:open-url", url),
+  weixinStatus: () => ipcRenderer.invoke("her:weixin-status"),
+  weixinLogin: () => ipcRenderer.invoke("her:weixin-login"),
+  weixinDisconnect: () => ipcRenderer.invoke("her:weixin-disconnect"),
   onEvent: (listener) => {
     const wrapped = (_event, data) => listener(data);
     ipcRenderer.on("her:event", wrapped);

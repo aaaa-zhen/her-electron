@@ -1,5 +1,28 @@
 /* --- Settings panel & onboarding --- */
 
+/** Render a QR code onto a canvas using a lightweight API */
+function renderQrToCanvas(canvas, text) {
+  const size = 200;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size, size);
+  // Use qrserver.com free API to generate QR image
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => ctx.drawImage(img, 0, 0, size, size);
+  img.onerror = () => {
+    // Fallback: show the URL as text
+    ctx.fillStyle = "#000";
+    ctx.font = "11px sans-serif";
+    ctx.fillText("扫码链接:", 10, 30);
+    ctx.fillText(text.slice(0, 30), 10, 50);
+    ctx.fillText(text.slice(30, 60), 10, 70);
+  };
+  img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}`;
+}
+
 function showApiKeySetup(onDone) {
   const overlay = document.createElement("div");
   overlay.className = "apikey-overlay";
@@ -126,18 +149,14 @@ function showOnboarding(onDone) {
 }
 
 const PROVIDER_PRESETS = {
+  packy: { baseURL: "https://www.packyapi.com", models: [
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6 · 最强、深度推理" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 · 均衡、高性价比" },
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 · 快速、低成本" },
+  ]},
   kimi: { baseURL: "https://api.moonshot.cn/v1", models: [
     { value: "kimi-k2-turbo-preview", label: "Kimi K2 Turbo · 快速、高性价比" },
     { value: "kimi-k2.5", label: "Kimi K2.5 · 最强、更深度思考" },
-  ]},
-  openai: { baseURL: "https://api.openai.com/v1", models: [
-    { value: "gpt-4o", label: "GPT-4o" },
-    { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-    { value: "o3-mini", label: "o3-mini" },
-  ]},
-  deepseek: { baseURL: "https://api.deepseek.com/v1", models: [
-    { value: "deepseek-chat", label: "DeepSeek V3" },
-    { value: "deepseek-reasoner", label: "DeepSeek R1" },
   ]},
   custom: { baseURL: "", models: [] },
 };
@@ -181,11 +200,10 @@ function initSettingsPanel() {
       apiKeyInput.value = s.apiKey || "";
       // Detect provider from baseURL
       const baseURL = s.baseURL || "";
-      let detectedProvider = "kimi";
-      if (baseURL.includes("openai.com")) detectedProvider = "openai";
-      else if (baseURL.includes("deepseek.com")) detectedProvider = "deepseek";
+      let detectedProvider = "packy";
+      if (baseURL.includes("packyapi.com")) detectedProvider = "packy";
       else if (baseURL.includes("moonshot.cn")) detectedProvider = "kimi";
-      else if (baseURL && !baseURL.includes("moonshot.cn")) detectedProvider = "custom";
+      else if (baseURL) detectedProvider = "custom";
       providerSelect.value = detectedProvider;
       switchProvider(detectedProvider);
       if (detectedProvider === "custom") {
@@ -194,6 +212,7 @@ function initSettingsPanel() {
       } else {
         document.getElementById("settingsModel").value = s.model || PROVIDER_PRESETS[detectedProvider].models[0].value;
       }
+      document.getElementById("settingsSearchApiKey").value = s.searchApiKey || "";
       document.getElementById("settingsMsg").textContent = "";
     } catch (_) {}
     settingsOverlay.classList.add("open");
@@ -245,12 +264,20 @@ function initSettingsPanel() {
         payload.apiKey = "__clear__";
       }
 
+      const searchKey = document.getElementById("settingsSearchApiKey").value.trim();
+      if (searchKey && !searchKey.includes("...")) {
+        payload.searchApiKey = searchKey;
+      } else if (!searchKey) {
+        payload.searchApiKey = "__clear__";
+      }
+
       const result = await window.herAPI.saveSettings(payload);
       if (result.connected) {
         msgEl.textContent = "已保存 · 连接成功 ✓";
         msgEl.style.color = "#4ade80";
       } else if (result.connected === false) {
-        msgEl.textContent = "已保存 · 连接失败：" + (result.error || "请检查 API Key");
+        const hint = result.error || "请检查 API Key 和所选模型是否匹配";
+        msgEl.textContent = "已保存 · 连接失败：" + hint;
         msgEl.style.color = "#f87171";
       } else {
         msgEl.textContent = "已保存";
@@ -268,6 +295,94 @@ function initSettingsPanel() {
       msgEl.style.color = "#f87171";
     }
     btn.disabled = false;
+  });
+
+  // ── WeChat ──
+
+  const weixinLoginBtn = document.getElementById("weixinLoginBtn");
+  const weixinDisconnectBtn = document.getElementById("weixinDisconnectBtn");
+  const weixinStatusText = document.getElementById("weixinStatusText");
+  const weixinDot = document.getElementById("weixinDot");
+  const weixinQrWrap = document.getElementById("weixinQrWrap");
+
+  function updateWeixinUI(status, extra) {
+    if (status === "connected") {
+      weixinDot.style.background = "#4ade80";
+      weixinStatusText.textContent = "已连接";
+      weixinStatusText.style.color = "#4ade80";
+      weixinLoginBtn.style.display = "none";
+      weixinDisconnectBtn.style.display = "";
+      weixinQrWrap.style.display = "none";
+    } else if (status === "qr_scanned") {
+      weixinDot.style.background = "#facc15";
+      weixinStatusText.textContent = "已扫码，请在微信上确认...";
+      weixinStatusText.style.color = "#facc15";
+      weixinLoginBtn.style.display = "none";
+      weixinDisconnectBtn.style.display = "none";
+    } else if (status === "qr_pending") {
+      weixinDot.style.background = "#facc15";
+      weixinStatusText.textContent = "等待扫码...";
+      weixinStatusText.style.color = "#facc15";
+      weixinLoginBtn.style.display = "none";
+      weixinDisconnectBtn.style.display = "none";
+    } else {
+      weixinDot.style.background = "#666";
+      weixinStatusText.textContent = extra ? `未连接 · ${extra}` : "未连接";
+      weixinStatusText.style.color = "";
+      weixinLoginBtn.style.display = "";
+      weixinLoginBtn.textContent = "连接微信";
+      weixinLoginBtn.disabled = false;
+      weixinDisconnectBtn.style.display = "none";
+      weixinQrWrap.style.display = "none";
+    }
+  }
+
+  // Load initial status when settings open
+  document.getElementById("settingsBtn").addEventListener("click", () => {
+    window.herAPI.weixinStatus().then((res) => {
+      updateWeixinUI(res.status, res.accountId);
+    }).catch(() => {});
+  });
+
+  // Listen for status updates from main process (including QR code)
+  if (!window._weixinEventBound) {
+    window._weixinEventBound = true;
+    window.herAPI.onEvent((event) => {
+      if (event.type === "weixin_status") {
+        updateWeixinUI(event.status, event.accountId || event.error);
+        // Show QR code if we got a URL to encode
+        if (event.qrUrl) {
+          weixinQrWrap.style.display = "";
+          const canvas = document.getElementById("weixinQrCanvas");
+          if (canvas) {
+            renderQrToCanvas(canvas, event.qrUrl);
+          }
+        }
+      }
+    });
+  }
+
+  weixinLoginBtn.addEventListener("click", async () => {
+    weixinLoginBtn.disabled = true;
+    weixinLoginBtn.textContent = "正在连接...";
+    weixinStatusText.textContent = "正在获取二维码...";
+    weixinStatusText.style.color = "#facc15";
+
+    try {
+      const result = await window.herAPI.weixinLogin();
+      if (result.success) {
+        updateWeixinUI("connected", result.accountId);
+      } else {
+        updateWeixinUI("disconnected", result.error);
+      }
+    } catch (e) {
+      updateWeixinUI("disconnected", e.message);
+    }
+  });
+
+  weixinDisconnectBtn.addEventListener("click", async () => {
+    await window.herAPI.weixinDisconnect();
+    updateWeixinUI("disconnected");
   });
 
   // ── Update check ──

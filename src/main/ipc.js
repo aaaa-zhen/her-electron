@@ -64,6 +64,7 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
     const mask = (k) => k ? `${k.slice(0, 6)}...${k.slice(-4)}` : "";
     return {
       apiKey: mask(s.apiKey),
+      searchApiKey: mask(s.searchApiKey),
       baseURL: s.baseURL || "",
       model: s.model || "",
     };
@@ -76,6 +77,12 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
       update.apiKey = "";
     } else if (patch.apiKey && !patch.apiKey.includes("...")) {
       update.apiKey = patch.apiKey.replace(/\s+/g, "");
+    }
+    // Search API Key
+    if (patch.searchApiKey === "__clear__") {
+      update.searchApiKey = "";
+    } else if (patch.searchApiKey && !patch.searchApiKey.includes("...")) {
+      update.searchApiKey = patch.searchApiKey.replace(/\s+/g, "");
     }
     if (patch.baseURL !== undefined) update.baseURL = patch.baseURL.trim();
     if (patch.model !== undefined) update.model = patch.model.trim();
@@ -93,8 +100,23 @@ function registerIpc({ session, getMainWindow, paths, stores }) {
       });
       return { ok: true, connected: true };
     } catch (err) {
-      const msg = err.message || String(err);
-      return { ok: true, connected: false, error: msg.slice(0, 200) };
+      const status = err.status || err.statusCode || 0;
+      const raw = err.message || String(err);
+      let friendly;
+      if (status === 403) {
+        friendly = "当前 API Key 分组可能不支持所选模型，请尝试切换模型或更换 Key";
+      } else if (status === 401) {
+        friendly = "API Key 无效或已过期，请检查后重试";
+      } else if (status === 429) {
+        friendly = "请求过于频繁，请稍后再试";
+      } else if (status === 503 || status === 502) {
+        friendly = "API 服务暂时不可用，请稍后重试";
+      } else if (raw.includes("fetch failed") || raw.includes("ECONNREFUSED") || raw.includes("ENOTFOUND")) {
+        friendly = "无法连接到 API 服务器，请检查网络或 Base URL";
+      } else {
+        friendly = raw.slice(0, 200);
+      }
+      return { ok: true, connected: false, error: friendly };
     }
   });
 
@@ -211,4 +233,21 @@ function compareVersions(a, b) {
   return 0;
 }
 
-module.exports = { registerIpc };
+// ── WeChat IPC ──
+
+function registerWeixinIpc(weixinService) {
+  if (!weixinService) return;
+
+  ipcMain.handle("her:weixin-status", () => weixinService.getStatus());
+
+  ipcMain.handle("her:weixin-login", async () => {
+    return await weixinService.startLogin();
+  });
+
+  ipcMain.handle("her:weixin-disconnect", () => {
+    weixinService.disconnect();
+    return { ok: true };
+  });
+}
+
+module.exports = { registerIpc, registerWeixinIpc };

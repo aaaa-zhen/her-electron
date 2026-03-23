@@ -1060,6 +1060,7 @@ class ChatSession extends EventEmitter {
       currentStateSummary: stateSummary,
       awarenessContext,
       frozenMemory: frozen,
+      availableTools: this.tools.tools,
     });
 
     if (this.tools.setModel) this.tools.setModel(selectedModel);

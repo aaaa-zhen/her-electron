@@ -1,11 +1,10 @@
 {
   "name": "her",
-  "version": "1.11.0",
+  "version": "2.0.0",
   "description": "Her — AI companion desktop app",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "start:relay": "node remote-server/server.js",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win"
@@ -62,6 +61,7 @@
     "node-cron": "^4.2.1",
     "openai": "^6.32.0",
     "pptxgenjs": "^4.0.1",
+    "weixin-agent-sdk": "^0.1.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {

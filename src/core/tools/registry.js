@@ -402,6 +402,17 @@ function createTools({ paths, stores, scheduleService, createAnthropicClient, em
         required: ["url"],
       },
     },
+    {
+      name: "web_search",
+      description: "Search the web using Anthropic's built-in search. Returns relevant results with snippets. Use this for real-time information, current events, facts, etc.",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query" },
+        },
+        required: ["query"],
+      },
+    },
   ];
 
   function describeShellCommand(command) {
@@ -1176,6 +1187,33 @@ echo "Alarm set"`;
         return { type: "tool_result", tool_use_id: block.id, content: text.slice(0, 15000) };
       } catch (error) {
         return { type: "tool_result", tool_use_id: block.id, content: `Read failed: ${error.message}`, is_error: true };
+      }
+    }
+
+    if (block.name === "web_search") {
+      emitCommand("web_search", "搜索网页", block.input.query);
+      try {
+        const settings = stores.settingsStore.get();
+        const searchKey = settings.searchApiKey;
+        if (!searchKey) {
+          return { type: "tool_result", tool_use_id: block.id, content: "Web search not configured. Please add an Anthropic API key for search in Settings.", is_error: true };
+        }
+        const Anthropic = require("@anthropic-ai/sdk");
+        const client = new Anthropic({ apiKey: searchKey });
+        const response = await client.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 1024,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
+          messages: [{ role: "user", content: block.input.query }],
+        });
+        // Extract text from response (search results are woven into the text)
+        const text = response.content
+          .filter((b) => b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+        return { type: "tool_result", tool_use_id: block.id, content: text.slice(0, 10000) || "No results found." };
+      } catch (error) {
+        return { type: "tool_result", tool_use_id: block.id, content: `Search failed: ${error.message}`, is_error: true };
       }
     }
 

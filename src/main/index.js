@@ -2,7 +2,8 @@ const path = require("path");
 const { app, dialog, nativeImage, globalShortcut, Tray, Menu, Notification } = require("electron");
 const { ensureAppPaths } = require("./app-paths");
 const { createMainWindow } = require("./window");
-const { registerIpc } = require("./ipc");
+const { registerIpc, registerWeixinIpc } = require("./ipc");
+const { WeixinService } = require("../weixin/weixin-service");
 const { SettingsStore } = require("../core/storage/settings-store");
 const { ConversationStore } = require("../core/storage/conversation-store");
 const { MemoryStore } = require("../core/storage/memory-store");
@@ -65,6 +66,7 @@ let contextMonitor = null;
 
 let environmentMonitor = null;
 let awarenessService = null;
+let weixinService = null;
 let initialized = false;
 
 function dispatchReminderNotification(event) {
@@ -167,6 +169,14 @@ async function initializeApp() {
     stores,
   });
 
+  // WeChat bridge
+  weixinService = new WeixinService({ dataDir: paths.dataDir, sharedDir: paths.sharedDir });
+  weixinService.on("status", (event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("her:event", { type: "weixin_status", ...event });
+    }
+  });
+  registerWeixinIpc(weixinService);
 }
 
 
@@ -201,7 +211,8 @@ app.whenReady().then(async () => {
     });
 
     // System tray icon with quick actions
-    const trayIcon = nativeImage.createFromPath(path.join(__dirname, "../../build/icon.png")).resize({ width: 18, height: 18 });
+    const trayIcon = nativeImage.createFromPath(path.join(__dirname, "../../build/trayTemplate.png"));
+    trayIcon.setTemplateImage(true);
     tray = new Tray(trayIcon);
     tray.setToolTip("Her");
     const contextMenu = Menu.buildFromTemplate([
@@ -332,4 +343,5 @@ app.on("before-quit", () => {
   if (contextMonitor) contextMonitor.stop();
   if (environmentMonitor) environmentMonitor.stop();
   if (awarenessService) awarenessService.stop();
+  if (weixinService) weixinService.destroy();
 });

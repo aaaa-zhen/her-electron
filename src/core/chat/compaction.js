@@ -184,7 +184,36 @@ async function compactConversation({ conversationHistory, anthropic, emit, dagSt
     const summaryText = await callSummarize(
       anthropic,
       serialized,
-      "Summarize this conversation:\n\nFormat:\n## Goal\n## Progress\n## Key Decisions\n## Next Steps\n## Critical Context"
+      `Summarize this conversation as a structured checkpoint. Use this EXACT format:
+
+## Goal
+[What is the user trying to accomplish? Can be multiple items.]
+
+## Constraints & Preferences
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
+
+## Progress
+### Done
+- [x] [Completed tasks/changes]
+
+### In Progress
+- [ ] [Current work]
+
+### Blocked
+- [Issues preventing progress, if any]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+
+## Critical Context
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
+
+Keep each section concise. Preserve exact file paths, names, and error messages.`
     );
 
     const tokenEstimate = estimateTextTokens(summaryText);
@@ -237,7 +266,40 @@ async function condenseDag({ dagStore, anthropic }) {
     const condensed = await callSummarize(
       anthropic,
       combined,
-      "These are multiple conversation summaries from different time periods. Condense them into a single comprehensive summary that preserves all important context:\n\nFormat:\n## Key Facts & Decisions\n## Ongoing Work\n## User Preferences & Patterns\n## Critical Context"
+      `These are multiple conversation summaries from different time periods. Merge them into a single comprehensive summary. RULES:
+- PRESERVE all existing information
+- Move completed items from "In Progress" to "Done"
+- Remove resolved blockers
+- Update "Next Steps" based on current state
+
+Use this EXACT format:
+
+## Goal
+[Preserve existing goals, add new ones if tasks expanded]
+
+## Constraints & Preferences
+- [Preserve existing, add newly discovered ones]
+
+## Progress
+### Done
+- [x] [All completed items across summaries]
+
+### In Progress
+- [ ] [Current work — update based on latest progress]
+
+### Blocked
+- [Current blockers — remove if resolved]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale] (preserve all, add new)
+
+## Next Steps
+1. [Update based on current state]
+
+## Critical Context
+- [Preserve important context, add new if needed]
+
+Keep each section concise. Preserve exact file paths, names, and error messages.`
     );
 
     const tokenEstimate = estimateTextTokens(condensed);
